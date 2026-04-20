@@ -61,6 +61,14 @@ def _normalize_reasoning_level(
     return normalized
 
 
+def _get_model_max_tokens(model: str) -> int:
+    """Get the max output tokens for a model from config."""
+    model_option = get_model_option(model)
+    if model_option and "max_tokens" in model_option:
+        return model_option["max_tokens"]
+    return 4096  # Fallback default
+
+
 def _build_model_controls(
     model: str,
     reasoning_level: str,
@@ -68,45 +76,45 @@ def _build_model_controls(
     model_option = get_model_option(model)
     reasoning_mode = model_option["reasoning_mode"] if model_option else "none"
     extra_body: dict[str, object] = {}
+    model_max = _get_model_max_tokens(model)
 
     if reasoning_mode == "none":
-        return extra_body, min(settings.LLM_MAX_TOKENS, 512)
+        return extra_body, model_max
 
     if reasoning_mode == "toggle":
         extra_body["thinking"] = {
             "type": "disabled" if reasoning_level == "off" else "enabled",
         }
-        max_tokens = settings.LLM_MAX_TOKENS if reasoning_level != "off" else min(settings.LLM_MAX_TOKENS, 512)
-        return extra_body, max_tokens
+        return extra_body, model_max
 
     budget = REASONING_BUDGETS["deep" if reasoning_level == "deep" else "standard"]
 
     if model in {"qwen3.5-plus", "qwen3.6-plus"}:
         if reasoning_level == "off":
             extra_body["enable_thinking"] = False
-            return extra_body, min(settings.LLM_MAX_TOKENS, 512)
+            return extra_body, model_max
 
         extra_body["enable_thinking"] = True
         extra_body["thinking_budget"] = budget
-        return extra_body, max(settings.LLM_MAX_TOKENS, budget)
+        return extra_body, max(model_max, budget)
 
     if model == "glm-5":
         if reasoning_level == "off":
             extra_body["thinking"] = {"type": "disabled"}
-            return extra_body, min(settings.LLM_MAX_TOKENS, 512)
+            return extra_body, model_max
 
         extra_body["thinking"] = {
             "type": "enabled",
             "budget_tokens": budget,
         }
-        return extra_body, max(settings.LLM_MAX_TOKENS, budget)
+        return extra_body, max(model_max, budget)
 
     if model == "MiniMax-M2.5":
         extra_body["reasoning_split"] = True
         extra_body["thinking_budget"] = budget
-        return extra_body, max(settings.LLM_MAX_TOKENS, budget)
+        return extra_body, max(model_max, budget)
 
-    return extra_body, min(settings.LLM_MAX_TOKENS, 512)
+    return extra_body, model_max
 
 
 async def stream_chat_completion(

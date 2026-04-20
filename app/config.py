@@ -11,6 +11,7 @@ AVAILABLE_MODEL_OPTIONS = [
         "latency_hint": "fast",
         "reasoning_mode": "none",
         "experimental_reasoning": False,
+        "max_tokens": 16384,
     },
     {
         "id": "qwen3-coder-plus",
@@ -18,6 +19,7 @@ AVAILABLE_MODEL_OPTIONS = [
         "latency_hint": "fast",
         "reasoning_mode": "none",
         "experimental_reasoning": False,
+        "max_tokens": 16384,
     },
     {
         "id": "kimi-k2.5",
@@ -25,6 +27,7 @@ AVAILABLE_MODEL_OPTIONS = [
         "latency_hint": "fast",
         "reasoning_mode": "toggle",
         "experimental_reasoning": False,
+        "max_tokens": 8192,
     },
     {
         "id": "MiniMax-M2.5",
@@ -32,6 +35,7 @@ AVAILABLE_MODEL_OPTIONS = [
         "latency_hint": "balanced",
         "reasoning_mode": "always_budget",
         "experimental_reasoning": True,
+        "max_tokens": 16384,
     },
     {
         "id": "qwen3.5-plus",
@@ -39,6 +43,7 @@ AVAILABLE_MODEL_OPTIONS = [
         "latency_hint": "balanced",
         "reasoning_mode": "budget",
         "experimental_reasoning": False,
+        "max_tokens": 8192,
     },
     {
         "id": "qwen3.6-plus",
@@ -46,6 +51,7 @@ AVAILABLE_MODEL_OPTIONS = [
         "latency_hint": "slower",
         "reasoning_mode": "budget",
         "experimental_reasoning": False,
+        "max_tokens": 8192,
     },
     {
         "id": "glm-5",
@@ -53,6 +59,7 @@ AVAILABLE_MODEL_OPTIONS = [
         "latency_hint": "slower",
         "reasoning_mode": "budget",
         "experimental_reasoning": True,
+        "max_tokens": 8192,
     },
 ]
 
@@ -84,7 +91,6 @@ class Settings(BaseSettings):
     DATABASE_URL: str = _default_database_url()
     CONTEXT_WINDOW_SIZE: int = 20
     APP_TIMEZONE: str = "Asia/Shanghai"
-    LLM_MAX_TOKENS: int = 512
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
