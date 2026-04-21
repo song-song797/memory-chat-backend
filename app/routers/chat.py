@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,19 +48,20 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
     # Store user message
     memory_service.store_message(db, conv.id, "user", req.message)
 
-    # Build context from memory
-    context = memory_service.get_context_messages(db, conv.id)
-
     # Auto-generate title from the first user message
     if conv.title == "新对话":
         conv.title = req.message[:50] + ("..." if len(req.message) > 50 else "")
         db.commit()
+
+    # Build context from memory
+    context = memory_service.get_context_messages(db, conv.id, current_model=chosen_model)
 
     # Capture values before the DB session closes
     conv_id = conv.id
 
     async def event_stream():
         full_response = []
+        stream_cancelled = False
 
         # Send conversation_id as the first event (for new conversations)
         yield f"data: {json.dumps({'conversation_id': conv_id})}\n\n"
@@ -73,19 +75,29 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
             ):
                 full_response.append(chunk)
                 yield f"data: {json.dumps({'content': chunk})}\n\n"
+        except asyncio.CancelledError:
+            stream_cancelled = True
+            raise
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            # Persist partial assistant output even if the client stops streaming midway.
+            assistant_content = "".join(full_response)
+            if assistant_content:
+                save_db = SessionLocal()
+                try:
+                    memory_service.store_message(
+                        save_db,
+                        conv_id,
+                        "assistant",
+                        assistant_content,
+                        model=chosen_model,
+                    )
+                finally:
+                    save_db.close()
 
-        # Store assistant response using a NEW session (original is closed)
-        assistant_content = "".join(full_response)
-        if assistant_content:
-            save_db = SessionLocal()
-            try:
-                memory_service.store_message(save_db, conv_id, "assistant", assistant_content)
-            finally:
-                save_db.close()
-
-        yield "data: [DONE]\n\n"
+        if not stream_cancelled:
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         event_stream(),

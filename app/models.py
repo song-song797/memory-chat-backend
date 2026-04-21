@@ -41,6 +41,7 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(String(20))  # "user" | "assistant" | "system"
     content: Mapped[str] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")

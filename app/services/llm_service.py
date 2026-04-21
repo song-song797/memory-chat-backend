@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openai import AsyncOpenAI
 
-from ..config import get_model_option, settings
+from ..config import get_model_label, get_model_option, settings
 
 _client = AsyncOpenAI(
     api_key=settings.OPENAI_API_KEY,
@@ -13,8 +13,11 @@ _client = AsyncOpenAI(
 
 _SYSTEM_PROMPT = (
     "\u4f60\u662f\u4e00\u4e2a\u5e26\u957f\u671f\u8bb0\u5fc6\u7684\u804a\u5929\u52a9\u624b\u3002"
-    "\u9ed8\u8ba4\u8bf7\u7528\u7b80\u6d01\u3001\u81ea\u7136\u7684\u4e2d\u6587\u56de\u7b54\uff0c"
-    "\u9664\u975e\u7528\u6237\u660e\u786e\u8981\u6c42\u8be6\u7ec6\u5c55\u5f00\u3002\n"
+    "\u8bf7\u7528\u81ea\u7136\u7684\u4e2d\u6587\u56de\u7b54\uff0c"
+    "\u6982\u5ff5\u7b80\u5355\u65f6\u8bf7\u4fdd\u6301\u7b80\u6d01\uff0c"
+    "\u6d89\u53ca\u6846\u67b6\u3001\u67b6\u6784\u6216\u590d\u6742\u6280\u672f\u4e3b\u9898\u65f6\uff0c"
+    "\u8bf7\u4e3b\u52a8\u5206\u5c42\u5c55\u5f00\uff0c\u8bb2\u6e05\u6982\u5ff5\u3001\u4f5c\u7528\u3001"
+    "\u5173\u952e\u7ec4\u6210\u90e8\u5206\u3001\u5e38\u89c1\u7528\u6cd5\u548c\u9002\u7528\u573a\u666f\u3002\n"
     "\u5f53\u524d\u65f6\u95f4\uff08{timezone_name}\uff09\uff1a{current_time}\n"
     "\u5982\u679c\u7528\u6237\u63d0\u5230\u4eca\u5929\u3001\u6628\u5929\u3001\u660e\u5929\u6216\u5f53\u524d\u65f6\u95f4\uff0c"
     "\u8bf7\u4ee5\u4e0a\u9762\u7684\u65f6\u95f4\u4e3a\u51c6\u3002"
@@ -26,7 +29,7 @@ REASONING_BUDGETS = {
 }
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(model: str) -> str:
     timezone_name = settings.APP_TIMEZONE
     try:
         app_timezone = ZoneInfo(timezone_name)
@@ -37,7 +40,16 @@ def _build_system_prompt() -> str:
             app_timezone = timezone.utc
 
     now = datetime.now(app_timezone).strftime("%Y-%m-%d %H:%M:%S")
-    return _SYSTEM_PROMPT.format(current_time=now, timezone_name=timezone_name)
+    model_label = get_model_label(model)
+    identity_prompt = (
+        f"\n当前这次回答使用的模型是：{model_label}。"
+        "如果用户问你是什么模型，只能依据这条系统信息回答，"
+        "不要根据历史对话里其他模型的自称来推断自己的身份。"
+    )
+    return (_SYSTEM_PROMPT + identity_prompt).format(
+        current_time=now,
+        timezone_name=timezone_name,
+    )
 
 
 def _normalize_reasoning_level(
@@ -131,7 +143,7 @@ async def stream_chat_completion(
     )
     extra_body, max_tokens = _build_model_controls(chosen_model, normalized_reasoning)
 
-    full_messages = [{"role": "system", "content": _build_system_prompt()}]
+    full_messages = [{"role": "system", "content": _build_system_prompt(chosen_model)}]
     full_messages.extend(messages)
 
     stream = await _client.chat.completions.create(

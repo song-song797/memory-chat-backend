@@ -82,6 +82,17 @@ def get_model_option(model_id: str) -> dict[str, str | bool] | None:
     return next((item for item in AVAILABLE_MODEL_OPTIONS if item["id"] == model_id), None)
 
 
+def get_model_label(model_id: str | None) -> str:
+    if not model_id:
+        return "未知模型"
+
+    model_option = get_model_option(model_id)
+    if model_option and isinstance(model_option.get("label"), str):
+        return model_option["label"]
+
+    return model_id
+
+
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables / .env file."""
 
