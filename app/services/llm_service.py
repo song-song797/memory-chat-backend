@@ -130,10 +130,11 @@ def _build_model_controls(
 
 
 async def stream_chat_completion(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, object]],
     model: str | None = None,
     reasoning_level: str | None = None,
     legacy_mode: str | None = None,
+    system_prompt: str | None = None,
 ) -> AsyncGenerator[str, None]:
     chosen_model = model or settings.OPENAI_MODEL
     normalized_reasoning = _normalize_reasoning_level(
@@ -143,7 +144,12 @@ async def stream_chat_completion(
     )
     extra_body, max_tokens = _build_model_controls(chosen_model, normalized_reasoning)
 
-    full_messages = [{"role": "system", "content": _build_system_prompt(chosen_model)}]
+    full_messages = [
+        {
+            "role": "system",
+            "content": system_prompt or _build_system_prompt(chosen_model),
+        }
+    ]
     full_messages.extend(messages)
 
     stream = await _client.chat.completions.create(

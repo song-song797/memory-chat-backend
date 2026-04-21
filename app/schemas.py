@@ -12,10 +12,20 @@ def _serialize_datetime(value: datetime) -> str:
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
-    message: str = Field(..., min_length=1, max_length=10000)
+    message: str = Field(default="", max_length=10000)
     model: str | None = None
     reasoning_level: Literal["off", "standard", "deep"] | None = None
     mode: Literal["fast", "think"] | None = None
+
+
+class LandingChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+class LandingChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    history: list[LandingChatMessage] = Field(default_factory=list)
 
 
 class ConversationCreate(BaseModel):
@@ -26,11 +36,55 @@ class ConversationUpdate(BaseModel):
     title: str
 
 
+class RegisterRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime) -> str:
+        return _serialize_datetime(value)
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserOut
+
+
+class AttachmentOut(BaseModel):
+    id: str
+    name: str
+    mime_type: str
+    kind: str
+    size_bytes: int
+    content_url: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime) -> str:
+        return _serialize_datetime(value)
+
+
 class MessageOut(BaseModel):
     id: str
     role: str
     content: str
     created_at: datetime
+    attachments: list[AttachmentOut] = []
 
     model_config = {"from_attributes": True}
 

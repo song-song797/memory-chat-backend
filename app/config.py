@@ -3,6 +3,9 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+UPLOADS_DIR = BACKEND_DIR / "uploads"
+MAX_ATTACHMENTS_PER_MESSAGE = 6
+MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024
 
 AVAILABLE_MODEL_OPTIONS = [
     {

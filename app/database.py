@@ -46,3 +46,8 @@ def init_db():
     if "model" not in message_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE messages ADD COLUMN model VARCHAR(100)"))
+
+    conversation_columns = {column["name"] for column in inspector.get_columns("conversations")}
+    if "user_id" not in conversation_columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE conversations ADD COLUMN user_id VARCHAR(32)"))
