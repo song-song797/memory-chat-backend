@@ -45,7 +45,7 @@ def list_conversations(
     stmt = (
         select(Conversation)
         .where(Conversation.user_id == current_user.id)
-        .order_by(Conversation.updated_at.desc())
+        .order_by(Conversation.pinned.desc(), Conversation.updated_at.desc())
     )
     return list(db.execute(stmt).scalars().all())
 
@@ -67,7 +67,13 @@ def update_conversation(
     current_user: User = Depends(get_current_user),
 ):
     conversation = _get_user_conversation(db, current_user.id, conversation_id)
-    conversation.title = body.title
+    if body.title is None and body.pinned is None:
+        raise HTTPException(status_code=400, detail="No conversation changes provided")
+
+    if body.title is not None:
+        conversation.title = body.title
+    if body.pinned is not None:
+        conversation.pinned = body.pinned
     db.commit()
     db.refresh(conversation)
     return conversation

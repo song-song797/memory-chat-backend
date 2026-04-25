@@ -51,3 +51,8 @@ def init_db():
     if "user_id" not in conversation_columns:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE conversations ADD COLUMN user_id VARCHAR(32)"))
+    if "pinned" not in conversation_columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE conversations ADD COLUMN pinned BOOLEAN DEFAULT 0")
+            )

@@ -33,7 +33,8 @@ class ConversationCreate(BaseModel):
 
 
 class ConversationUpdate(BaseModel):
-    title: str
+    title: str | None = None
+    pinned: bool | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -96,6 +97,7 @@ class MessageOut(BaseModel):
 class ConversationOut(BaseModel):
     id: str
     title: str
+    pinned: bool
     created_at: datetime
     updated_at: datetime
 
