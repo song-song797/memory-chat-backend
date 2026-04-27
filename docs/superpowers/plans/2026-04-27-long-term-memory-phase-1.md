@@ -66,7 +66,12 @@ psycopg[binary]==3.2.3
 
 ```env
 # Database
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/llm_memory_chat
+DB_DRIVER=postgresql+psycopg
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=llm_memory_chat
+DB_USER=root
+DB_PASSWORD=
 ```
 
 - [ ] **步骤 3：创建 Alembic 配置**
@@ -1483,7 +1488,12 @@ createdb llm_memory_chat
 将 `backend/.env` 的数据库连接改为：
 
 ```env
-DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/llm_memory_chat
+DB_DRIVER=postgresql+psycopg
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=llm_memory_chat
+DB_USER=root
+DB_PASSWORD=
 ```
 
 保留现有模型相关配置不变。

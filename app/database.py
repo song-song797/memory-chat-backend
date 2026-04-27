@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from .config import BACKEND_DIR, settings
+from .config import BACKEND_DIR, get_database_url
 
 
 def _resolve_database_url(url: str) -> str:
@@ -13,7 +13,7 @@ def _resolve_database_url(url: str) -> str:
     return f"sqlite:///{resolved_path.as_posix()}"
 
 
-DATABASE_URL = _resolve_database_url(settings.DATABASE_URL)
+DATABASE_URL = _resolve_database_url(get_database_url())
 
 engine = create_engine(
     DATABASE_URL,
