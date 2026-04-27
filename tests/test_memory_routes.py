@@ -108,6 +108,14 @@ class MemoryRoutesTests(unittest.TestCase):
         self.assertEqual(blank_content.status_code, 400)
         self.assertEqual(blank_content.json()["detail"], "Memory content cannot be empty")
 
+        empty_content = self.client.post(
+            "/api/memories",
+            json={"content": "", "kind": "fact"},
+            headers=headers,
+        )
+        self.assertEqual(empty_content.status_code, 400)
+        self.assertEqual(empty_content.json()["detail"], "Memory content cannot be empty")
+
         blank_kind = self.client.post(
             "/api/memories",
             json={"content": "Valid content", "kind": "   "},
@@ -115,6 +123,14 @@ class MemoryRoutesTests(unittest.TestCase):
         )
         self.assertEqual(blank_kind.status_code, 400)
         self.assertEqual(blank_kind.json()["detail"], "Memory kind cannot be empty")
+
+        empty_kind = self.client.post(
+            "/api/memories",
+            json={"content": "Valid content", "kind": ""},
+            headers=headers,
+        )
+        self.assertEqual(empty_kind.status_code, 400)
+        self.assertEqual(empty_kind.json()["detail"], "Memory kind cannot be empty")
 
         create_response = self.client.post(
             "/api/memories",
@@ -131,6 +147,14 @@ class MemoryRoutesTests(unittest.TestCase):
         )
         self.assertEqual(blank_content_update.status_code, 400)
         self.assertEqual(blank_content_update.json()["detail"], "Memory content cannot be empty")
+
+        empty_content_update = self.client.put(
+            f"/api/memories/{memory_id}",
+            json={"content": ""},
+            headers=headers,
+        )
+        self.assertEqual(empty_content_update.status_code, 400)
+        self.assertEqual(empty_content_update.json()["detail"], "Memory content cannot be empty")
 
         blank_kind_update = self.client.put(
             f"/api/memories/{memory_id}",

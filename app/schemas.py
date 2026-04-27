@@ -113,12 +113,12 @@ class ConversationDetail(ConversationOut):
 
 
 class MemoryCreate(BaseModel):
-    content: str = Field(..., min_length=1, max_length=1000)
+    content: str = Field(..., max_length=1000)
     kind: str = Field(default="fact", max_length=40)
 
 
 class MemoryUpdate(BaseModel):
-    content: str | None = Field(default=None, min_length=1, max_length=1000)
+    content: str | None = Field(default=None, max_length=1000)
     kind: str | None = Field(default=None, max_length=40)
     enabled: bool | None = None
 
