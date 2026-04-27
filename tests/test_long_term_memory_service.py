@@ -1,10 +1,16 @@
+import tempfile
 import unittest
+import warnings
+from pathlib import Path
 
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
+from app.database import Base, get_db
+from app.main import app
 from app.models import Conversation, Memory, Message, User
+from app.routers import chat as chat_router
 from app.services import memory_service
 
 
@@ -122,6 +128,60 @@ class LongTermMemoryServiceTests(unittest.TestCase):
             self.assertEqual(context[0]["role"], "system")
             self.assertIn("用户使用 PyCharm", context[0]["content"])
             self.assertEqual(context[1], {"role": "user", "content": "怎么打开数据库"})
+        finally:
+            db.close()
+
+
+class ChatMemoryRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        database_path = Path(self.temp_dir.name) / "chat-memory-route.db"
+        self.engine = create_engine(
+            f"sqlite:///{database_path.as_posix()}",
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(bind=self.engine)
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        self.original_chat_session_local = chat_router.SessionLocal
+
+    def tearDown(self) -> None:
+        app.dependency_overrides.clear()
+        chat_router.SessionLocal = self.original_chat_session_local
+        self.engine.dispose()
+        self.temp_dir.cleanup()
+
+    def test_attachment_failure_does_not_create_explicit_memory(self) -> None:
+        def override_get_db():
+            db = self.SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_db] = override_get_db
+        chat_router.SessionLocal = self.SessionLocal
+
+        with TestClient(app) as client:
+            register_response = client.post(
+                "/api/auth/register",
+                json={"email": "orphan-memory@example.com", "password": "password123"},
+            )
+            self.assertEqual(register_response.status_code, 201)
+            headers = {"Authorization": f"Bearer {register_response.json()['token']}"}
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ResourceWarning)
+                response = client.post(
+                    "/api/chat",
+                    data={"message": "请记住我使用 PyCharm 开发 Python 项目"},
+                    files={"files": ("empty.txt", b"", "text/plain")},
+                    headers=headers,
+                )
+
+        self.assertEqual(response.status_code, 400)
+        db = self.SessionLocal()
+        try:
+            self.assertEqual(db.query(Memory).count(), 0)
         finally:
             db.close()
 

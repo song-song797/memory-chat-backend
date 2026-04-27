@@ -138,11 +138,6 @@ async def chat(
         raise HTTPException(status_code=400, detail=f"Model `{chosen_model}` is not supported")
 
     user_message = memory_service.store_message(db, conv.id, "user", req.message.strip())
-    try:
-        memory_service.maybe_store_explicit_memory(db, current_user.id, user_message)
-    except Exception as error:
-        print(f"Failed to store long-term memory: {error}")
-
     if uploads:
         try:
             save_db = SessionLocal()
@@ -166,6 +161,12 @@ async def chat(
         db.commit()
 
     try:
+        memory_service.maybe_store_explicit_memory(db, current_user.id, user_message)
+    except Exception as error:
+        db.rollback()
+        print(f"Failed to store long-term memory: {error}")
+
+    try:
         context = memory_service.get_chat_context_messages(
             db,
             current_user.id,
@@ -173,6 +174,7 @@ async def chat(
             current_model=chosen_model,
         )
     except Exception as error:
+        db.rollback()
         print(f"Failed to load long-term memory context: {error}")
         context = memory_service.get_context_messages(db, conv.id, current_model=chosen_model)
     conv_id = conv.id
