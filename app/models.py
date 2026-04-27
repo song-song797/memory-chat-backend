@@ -38,6 +38,40 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="Memory.updated_at.desc()",
     )
+    projects: Mapped[list["Project"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="Project.updated_at.desc()",
+    )
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    default_reasoning_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="projects")
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="project",
+        order_by="Conversation.updated_at.desc()",
+    )
+    memories: Mapped[list["Memory"]] = relationship(
+        back_populates="project",
+        order_by="Memory.updated_at.desc()",
+    )
 
 
 class Conversation(Base):
@@ -47,6 +81,9 @@ class Conversation(Base):
     user_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
+    project_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(200), default="新对话")
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -55,6 +92,7 @@ class Conversation(Base):
     )
 
     user: Mapped["User | None"] = relationship(back_populates="conversations")
+    project: Mapped["Project | None"] = relationship(back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
@@ -89,10 +127,19 @@ class Memory(Base):
     user_id: Mapped[str] = mapped_column(
         String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    project_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     content: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(40), default="fact")
+    scope: Mapped[str] = mapped_column(String(20), default="global")
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    importance: Mapped[int] = mapped_column(Integer, default=0)
     source_message_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    superseded_by_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("memories.id", ondelete="SET NULL"), nullable=True
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -100,9 +147,12 @@ class Memory(Base):
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="memories")
+    project: Mapped["Project | None"] = relationship(back_populates="memories")
     source_message: Mapped["Message | None"] = relationship()
+    superseded_by: Mapped["Memory | None"] = relationship(remote_side="Memory.id")
 
 
 class Attachment(Base):
