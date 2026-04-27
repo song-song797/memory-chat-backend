@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import BACKEND_DIR, settings
@@ -38,21 +38,5 @@ def get_db():
 
 
 def init_db():
-    """Create all tables. Called once at startup."""
-    Base.metadata.create_all(bind=engine)
-
-    inspector = inspect(engine)
-    message_columns = {column["name"] for column in inspector.get_columns("messages")}
-    if "model" not in message_columns:
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE messages ADD COLUMN model VARCHAR(100)"))
-
-    conversation_columns = {column["name"] for column in inspector.get_columns("conversations")}
-    if "user_id" not in conversation_columns:
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE conversations ADD COLUMN user_id VARCHAR(32)"))
-    if "pinned" not in conversation_columns:
-        with engine.begin() as connection:
-            connection.execute(
-                text("ALTER TABLE conversations ADD COLUMN pinned BOOLEAN DEFAULT 0")
-            )
+    """Schema is managed by Alembic migrations."""
+    return None
