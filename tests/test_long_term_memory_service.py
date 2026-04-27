@@ -40,6 +40,7 @@ class LongTermMemoryServiceTests(unittest.TestCase):
             self.assertEqual(memory.source_message_id, message.id)
             self.assertEqual(memory.kind, "tool")
             self.assertIn("PyCharm", memory.content)
+            self.assertFalse(memory.content.startswith("请"))
         finally:
             db.close()
 
@@ -93,6 +94,7 @@ class LongTermMemoryServiceTests(unittest.TestCase):
             self.assertEqual(context["role"], "system")
             self.assertIn("用户喜欢简洁中文回答", context["content"])
             self.assertNotIn("用户喜欢英文回答", context["content"])
+            self.assertIsNone(enabled.last_used_at)
         finally:
             db.close()
 

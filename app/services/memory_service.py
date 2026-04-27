@@ -131,7 +131,7 @@ def get_conversation_messages(db: Session, conversation_id: str) -> list[Message
     return list(db.execute(stmt).scalars().all())
 
 
-MEMORY_INTENT_MARKERS = ("记住", "请记住", "以后你要记得", "以后回答我时")
+MEMORY_INTENT_MARKERS = ("以后你要记得", "以后回答我时", "请记住", "记住")
 MAX_MEMORY_CONTEXT_ITEMS = 12
 MAX_MEMORY_CONTENT_LENGTH = 500
 
@@ -194,13 +194,7 @@ def get_enabled_memories_for_context(
         .order_by(Memory.last_used_at.desc().nullslast(), Memory.updated_at.desc())
         .limit(limit)
     )
-    memories = list(db.execute(stmt).scalars().all())
-    if memories:
-        now = datetime.now(timezone.utc)
-        for memory in memories:
-            memory.last_used_at = now
-        db.commit()
-    return memories
+    return list(db.execute(stmt).scalars().all())
 
 
 def get_long_term_memory_context(db: Session, user_id: str) -> dict[str, str] | None:
