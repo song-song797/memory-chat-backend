@@ -98,6 +98,33 @@ class LongTermMemoryServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_compose_context_prepends_long_term_memory(self) -> None:
+        db = self.SessionLocal()
+        try:
+            user = User(email="compose@example.com", password_hash="hash")
+            conversation = Conversation(user=user, title="compose")
+            db.add_all([user, conversation])
+            db.commit()
+            db.refresh(user)
+            db.refresh(conversation)
+
+            db.add(Memory(user_id=user.id, content="用户使用 PyCharm", kind="tool"))
+            db.add(Message(conversation_id=conversation.id, role="user", content="怎么打开数据库"))
+            db.commit()
+
+            context = memory_service.get_chat_context_messages(
+                db,
+                user.id,
+                conversation.id,
+                current_model="MiniMax-M2.5",
+            )
+
+            self.assertEqual(context[0]["role"], "system")
+            self.assertIn("用户使用 PyCharm", context[0]["content"])
+            self.assertEqual(context[1], {"role": "user", "content": "怎么打开数据库"})
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

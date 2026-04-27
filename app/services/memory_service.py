@@ -120,6 +120,20 @@ def get_context_messages(
     return [_format_context_message(message, current_model) for message in messages]
 
 
+def get_chat_context_messages(
+    db: Session,
+    user_id: str,
+    conversation_id: str,
+    current_model: str | None = None,
+) -> list[dict[str, object]]:
+    context: list[dict[str, object]] = []
+    long_term_context = get_long_term_memory_context(db, user_id)
+    if long_term_context:
+        context.append(long_term_context)
+    context.extend(get_context_messages(db, conversation_id, current_model=current_model))
+    return context
+
+
 def get_conversation_messages(db: Session, conversation_id: str) -> list[Message]:
     """Get all messages for a conversation, ordered by time."""
     stmt = (
