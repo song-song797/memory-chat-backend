@@ -1,77 +1,77 @@
-# Long-Term Memory Phase 1 Implementation Plan
+# 长期记忆第一阶段实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给执行代理的说明：** 必须使用子技能：推荐使用 `superpowers:subagent-driven-development`，也可以使用 `superpowers:executing-plans`，并按任务逐项执行。步骤使用复选框（`- [ ]`）跟踪进度。
 
-**Goal:** Build PostgreSQL-backed, user-scoped long-term memory without embedding or pgvector in phase 1.
+**目标：** 构建基于 PostgreSQL 的用户级长期记忆；第一阶段不加入 embedding 或 pgvector。
 
-**Architecture:** Keep SQLAlchemy as the ORM, add Alembic for schema versioning, and introduce a plain `memories` table tied to users. Chat will keep its current short-term context and prepend a small, enabled set of user memories before each LLM call.
+**架构：** 保留 SQLAlchemy 作为 ORM，引入 Alembic 管理数据库结构版本，并新增一张普通的 `memories` 表关联用户。聊天流程继续使用当前短期上下文，同时在每次调用大模型前，把少量启用中的用户长期记忆放到上下文前面。
 
-**Tech Stack:** FastAPI, SQLAlchemy, Alembic, PostgreSQL via `psycopg`, React, TypeScript, Vite.
-
----
-
-## File Structure
-
-Backend files:
-
-- Modify `backend/requirements.txt`: add PostgreSQL and Alembic dependencies.
-- Modify `backend/.env.example`: show PostgreSQL `DATABASE_URL`.
-- Create `backend/alembic.ini`: Alembic CLI config.
-- Create `backend/alembic/env.py`: load app metadata and database URL.
-- Create `backend/alembic/versions/20260427_0001_create_initial_schema.py`: baseline schema for existing tables.
-- Create `backend/alembic/versions/20260427_0002_create_memories.py`: `memories` table migration.
-- Modify `backend/app/database.py`: stop mutating schema at app startup.
-- Modify `backend/app/models.py`: add `Memory`.
-- Modify `backend/app/schemas.py`: add memory request and response schemas.
-- Modify `backend/app/services/memory_service.py`: add long-term memory helpers beside current short-term context helpers.
-- Create `backend/app/routers/memories.py`: authenticated memory CRUD.
-- Modify `backend/app/main.py`: include memory router.
-- Modify `backend/app/routers/chat.py`: save explicit memories and inject enabled memories.
-- Create `backend/tests/test_long_term_memory_service.py`: service-level memory tests.
-- Create `backend/tests/test_memory_routes.py`: authenticated API tests.
-
-Frontend files:
-
-- Modify `fronted/src/types.ts`: add `Memory`.
-- Modify `fronted/src/services/api.ts`: add memory CRUD client functions.
-- Create `fronted/src/components/MemorySettingsSection.tsx`: focused memory management UI.
-- Modify `fronted/src/components/SettingsDrawer.tsx`: render memory section.
-- Modify `fronted/src/App.tsx`: own memory state and handlers.
-- Modify `fronted/src/App.css`: add compact settings styles for memory controls.
+**技术栈：** FastAPI、SQLAlchemy、Alembic、PostgreSQL（通过 `psycopg`）、React、TypeScript、Vite。
 
 ---
 
-### Task 1: PostgreSQL And Alembic Baseline
+## 文件结构
 
-**Files:**
-- Modify: `backend/requirements.txt`
-- Modify: `backend/.env.example`
-- Create: `backend/alembic.ini`
-- Create: `backend/alembic/env.py`
-- Create: `backend/alembic/versions/20260427_0001_create_initial_schema.py`
-- Modify: `backend/app/database.py`
+后端文件：
 
-- [ ] **Step 1: Add database dependencies**
+- 修改 `backend/requirements.txt`：添加 PostgreSQL 和 Alembic 依赖。
+- 修改 `backend/.env.example`：展示 PostgreSQL 版 `DATABASE_URL`。
+- 新建 `backend/alembic.ini`：Alembic 命令行配置。
+- 新建 `backend/alembic/env.py`：加载应用 metadata 和数据库 URL。
+- 新建 `backend/alembic/versions/20260427_0001_create_initial_schema.py`：现有表结构的基线迁移。
+- 新建 `backend/alembic/versions/20260427_0002_create_memories.py`：`memories` 表迁移。
+- 修改 `backend/app/database.py`：应用启动时不再自动改数据库结构。
+- 修改 `backend/app/models.py`：新增 `Memory` 模型。
+- 修改 `backend/app/schemas.py`：新增记忆相关请求和响应 schema。
+- 修改 `backend/app/services/memory_service.py`：在现有短期上下文逻辑旁边新增长期记忆 helper。
+- 新建 `backend/app/routers/memories.py`：需要登录的记忆 CRUD 接口。
+- 修改 `backend/app/main.py`：注册记忆 router。
+- 修改 `backend/app/routers/chat.py`：保存明确记忆，并注入启用的长期记忆。
+- 新建 `backend/tests/test_long_term_memory_service.py`：长期记忆服务层测试。
+- 新建 `backend/tests/test_memory_routes.py`：需要登录的记忆 API 测试。
 
-Modify `backend/requirements.txt` so it includes these new lines:
+前端文件：
+
+- 修改 `fronted/src/types.ts`：新增 `Memory` 类型。
+- 修改 `fronted/src/services/api.ts`：新增记忆 CRUD 请求函数。
+- 新建 `fronted/src/components/MemorySettingsSection.tsx`：独立的记忆管理 UI。
+- 修改 `fronted/src/components/SettingsDrawer.tsx`：渲染记忆管理区块。
+- 修改 `fronted/src/App.tsx`：管理记忆状态和交互函数。
+- 修改 `fronted/src/App.css`：添加紧凑的记忆设置样式。
+
+---
+
+### 任务 1：PostgreSQL 和 Alembic 基线
+
+**文件：**
+- 修改：`backend/requirements.txt`
+- 修改：`backend/.env.example`
+- 新建：`backend/alembic.ini`
+- 新建：`backend/alembic/env.py`
+- 新建：`backend/alembic/versions/20260427_0001_create_initial_schema.py`
+- 修改：`backend/app/database.py`
+
+- [ ] **步骤 1：添加数据库依赖**
+
+修改 `backend/requirements.txt`，加入这些新依赖：
 
 ```text
 alembic==1.13.3
 psycopg[binary]==3.2.3
 ```
 
-- [ ] **Step 2: Update example database configuration**
+- [ ] **步骤 2：更新示例数据库配置**
 
-Change the database section in `backend/.env.example` to:
+将 `backend/.env.example` 的数据库配置改成：
 
 ```env
 # Database
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/llm_memory_chat
 ```
 
-- [ ] **Step 3: Create Alembic config**
+- [ ] **步骤 3：创建 Alembic 配置**
 
-Create `backend/alembic.ini`:
+新建 `backend/alembic.ini`：
 
 ```ini
 [alembic]
@@ -114,9 +114,9 @@ format = %(levelname)-5.5s [%(name)s] %(message)s
 datefmt = %H:%M:%S
 ```
 
-- [ ] **Step 4: Create Alembic environment**
+- [ ] **步骤 4：创建 Alembic 运行环境文件**
 
-Create `backend/alembic/env.py`:
+新建 `backend/alembic/env.py`：
 
 ```python
 from logging.config import fileConfig
@@ -168,9 +168,9 @@ else:
     run_migrations_online()
 ```
 
-- [ ] **Step 5: Create baseline migration**
+- [ ] **步骤 5：创建基线迁移**
 
-Create `backend/alembic/versions/20260427_0001_create_initial_schema.py`:
+新建 `backend/alembic/versions/20260427_0001_create_initial_schema.py`：
 
 ```python
 from alembic import op
@@ -254,9 +254,9 @@ def downgrade() -> None:
     op.drop_table("users")
 ```
 
-- [ ] **Step 6: Stop app startup from changing schema**
+- [ ] **步骤 6：停止应用启动时自动修改表结构**
 
-Change `backend/app/database.py` so `init_db()` no longer calls `Base.metadata.create_all()` or manual `ALTER TABLE` statements:
+修改 `backend/app/database.py`，让 `init_db()` 不再调用 `Base.metadata.create_all()`，也不再执行手写 `ALTER TABLE`：
 
 ```python
 def init_db():
@@ -264,45 +264,45 @@ def init_db():
     return None
 ```
 
-Also remove unused imports from `backend/app/database.py`:
+同时从 `backend/app/database.py` 删除不再使用的 import：
 
 ```python
 from sqlalchemy import create_engine
 ```
 
-Keep this import:
+保留这个 import：
 
 ```python
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 ```
 
-- [ ] **Step 7: Install dependencies**
+- [ ] **步骤 7：安装依赖**
 
-Run:
+运行：
 
 ```bash
 cd backend
 python -m pip install -r requirements.txt
 ```
 
-Expected: command exits successfully and installs `alembic` and `psycopg`.
+预期：命令成功结束，并安装 `alembic` 和 `psycopg`。
 
-- [ ] **Step 8: Verify Alembic can inspect the migration chain**
+- [ ] **步骤 8：确认 Alembic 能识别迁移链路**
 
-Run:
+运行：
 
 ```bash
 cd backend
 alembic history
 ```
 
-Expected output includes:
+预期输出包含：
 
 ```text
 20260427_0001 -> <base>, create initial schema
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **步骤 9：提交**
 
 ```bash
 git -C backend add requirements.txt .env.example alembic.ini alembic app/database.py
@@ -311,18 +311,18 @@ git -C backend commit -m "chore: add postgres migration baseline"
 
 ---
 
-### Task 2: Memory Model, Schemas, And Service
+### 任务 2：记忆模型、Schema 和服务层
 
-**Files:**
-- Modify: `backend/app/models.py`
-- Modify: `backend/app/schemas.py`
-- Modify: `backend/app/services/memory_service.py`
-- Create: `backend/alembic/versions/20260427_0002_create_memories.py`
-- Create: `backend/tests/test_long_term_memory_service.py`
+**文件：**
+- 修改：`backend/app/models.py`
+- 修改：`backend/app/schemas.py`
+- 修改：`backend/app/services/memory_service.py`
+- 新建：`backend/alembic/versions/20260427_0002_create_memories.py`
+- 新建：`backend/tests/test_long_term_memory_service.py`
 
-- [ ] **Step 1: Write service tests first**
+- [ ] **步骤 1：先写服务层测试**
 
-Create `backend/tests/test_long_term_memory_service.py`:
+新建 `backend/tests/test_long_term_memory_service.py`：
 
 ```python
 import unittest
@@ -428,22 +428,22 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [ ] **步骤 2：运行测试，确认当前会失败**
 
-Run:
+运行：
 
 ```bash
 cd backend
 PYTHONPATH=. python -m unittest tests.test_long_term_memory_service -v
 ```
 
-Expected: failure because `Memory` and new service functions do not exist yet.
+预期：测试失败，因为 `Memory` 和新的服务函数还不存在。
 
-- [ ] **Step 3: Add Memory model**
+- [ ] **步骤 3：添加 Memory 模型**
 
-In `backend/app/models.py`, add `Memory` to the imports and relationships.
+在 `backend/app/models.py` 中，把 `Memory` 加入模型和关系定义。
 
-Add this relationship to `User`:
+给 `User` 添加这个 relationship：
 
 ```python
     memories: Mapped[list["Memory"]] = relationship(
@@ -453,7 +453,7 @@ Add this relationship to `User`:
     )
 ```
 
-Add this class after `Message`:
+在 `Message` 后面添加这个类：
 
 ```python
 class Memory(Base):
@@ -479,9 +479,9 @@ class Memory(Base):
     source_message: Mapped["Message | None"] = relationship()
 ```
 
-- [ ] **Step 4: Add memory schemas**
+- [ ] **步骤 4：添加记忆 schema**
 
-In `backend/app/schemas.py`, add:
+在 `backend/app/schemas.py` 中添加：
 
 ```python
 class MemoryCreate(BaseModel):
@@ -513,9 +513,9 @@ class MemoryOut(BaseModel):
         return _serialize_datetime(value)
 ```
 
-- [ ] **Step 5: Add memory migration**
+- [ ] **步骤 5：添加记忆表迁移**
 
-Create `backend/alembic/versions/20260427_0002_create_memories.py`:
+新建 `backend/alembic/versions/20260427_0002_create_memories.py`：
 
 ```python
 from alembic import op
@@ -551,9 +551,9 @@ def downgrade() -> None:
     op.drop_table("memories")
 ```
 
-- [ ] **Step 6: Add long-term memory service helpers**
+- [ ] **步骤 6：添加长期记忆服务 helper**
 
-Append these helpers to `backend/app/services/memory_service.py`:
+将这些 helper 追加到 `backend/app/services/memory_service.py`：
 
 ```python
 from datetime import datetime, timezone
@@ -642,24 +642,24 @@ def get_long_term_memory_context(db: Session, user_id: str) -> dict[str, str] | 
     }
 ```
 
-Also update the existing model import at the top of `memory_service.py`:
+同时更新 `memory_service.py` 顶部现有的模型 import：
 
 ```python
 from ..models import Attachment, Conversation, Memory, Message
 ```
 
-- [ ] **Step 7: Run service tests**
+- [ ] **步骤 7：运行服务层测试**
 
-Run:
+运行：
 
 ```bash
 cd backend
 PYTHONPATH=. python -m unittest tests.test_long_term_memory_service -v
 ```
 
-Expected: all tests pass.
+预期：全部测试通过。
 
-- [ ] **Step 8: Commit**
+- [ ] **步骤 8：提交**
 
 ```bash
 git -C backend add app/models.py app/schemas.py app/services/memory_service.py alembic/versions/20260427_0002_create_memories.py tests/test_long_term_memory_service.py
@@ -668,16 +668,16 @@ git -C backend commit -m "feat: add long-term memory model"
 
 ---
 
-### Task 3: Authenticated Memory API
+### 任务 3：需要登录的记忆 API
 
-**Files:**
-- Create: `backend/app/routers/memories.py`
-- Modify: `backend/app/main.py`
-- Create: `backend/tests/test_memory_routes.py`
+**文件：**
+- 新建：`backend/app/routers/memories.py`
+- 修改：`backend/app/main.py`
+- 新建：`backend/tests/test_memory_routes.py`
 
-- [ ] **Step 1: Write route tests first**
+- [ ] **步骤 1：先写路由测试**
 
-Create `backend/tests/test_memory_routes.py`:
+新建 `backend/tests/test_memory_routes.py`：
 
 ```python
 import tempfile
@@ -785,20 +785,20 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [ ] **步骤 2：运行测试，确认当前会失败**
 
-Run:
+运行：
 
 ```bash
 cd backend
 PYTHONPATH=. python -m unittest tests.test_memory_routes -v
 ```
 
-Expected: failure because `/api/memories` routes do not exist yet.
+预期：测试失败，因为 `/api/memories` 路由还不存在。
 
-- [ ] **Step 3: Add memory router**
+- [ ] **步骤 3：添加记忆 router**
 
-Create `backend/app/routers/memories.py`:
+新建 `backend/app/routers/memories.py`：
 
 ```python
 from fastapi import APIRouter, Depends, HTTPException
@@ -880,32 +880,32 @@ def delete_memory(
     db.commit()
 ```
 
-- [ ] **Step 4: Register router**
+- [ ] **步骤 4：注册 router**
 
-Modify `backend/app/main.py` imports:
+修改 `backend/app/main.py` 的 imports：
 
 ```python
 from .routers import attachments, auth, chat, conversations, memories
 ```
 
-Add this include after existing router includes:
+在已有 router include 后添加：
 
 ```python
 app.include_router(memories.router)
 ```
 
-- [ ] **Step 5: Run route tests**
+- [ ] **步骤 5：运行路由测试**
 
-Run:
+运行：
 
 ```bash
 cd backend
 PYTHONPATH=. python -m unittest tests.test_memory_routes -v
 ```
 
-Expected: all tests pass.
+预期：全部测试通过。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6：提交**
 
 ```bash
 git -C backend add app/routers/memories.py app/main.py tests/test_memory_routes.py
@@ -914,16 +914,16 @@ git -C backend commit -m "feat: add memory management api"
 
 ---
 
-### Task 4: Chat Memory Save And Injection
+### 任务 4：聊天中的记忆保存和注入
 
-**Files:**
-- Modify: `backend/app/routers/chat.py`
-- Modify: `backend/tests/test_long_term_memory_service.py`
-- Modify: `backend/tests/test_memory_service.py`
+**文件：**
+- 修改：`backend/app/routers/chat.py`
+- 修改：`backend/tests/test_long_term_memory_service.py`
+- 修改：`backend/tests/test_memory_service.py`
 
-- [ ] **Step 1: Add context composition test**
+- [ ] **步骤 1：添加上下文组合测试**
 
-Append this test method to `LongTermMemoryServiceTests` in `backend/tests/test_long_term_memory_service.py`:
+将这个测试方法追加到 `backend/tests/test_long_term_memory_service.py` 的 `LongTermMemoryServiceTests` 中：
 
 ```python
     def test_compose_context_prepends_long_term_memory(self) -> None:
@@ -954,20 +954,20 @@ Append this test method to `LongTermMemoryServiceTests` in `backend/tests/test_l
             db.close()
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [ ] **步骤 2：运行测试，确认当前会失败**
 
-Run:
+运行：
 
 ```bash
 cd backend
 PYTHONPATH=. python -m unittest tests.test_long_term_memory_service -v
 ```
 
-Expected: failure because `get_chat_context_messages` does not exist.
+预期：测试失败，因为 `get_chat_context_messages` 还不存在。
 
-- [ ] **Step 3: Add composed context helper**
+- [ ] **步骤 3：添加组合上下文 helper**
 
-Add this function to `backend/app/services/memory_service.py`:
+将这个函数添加到 `backend/app/services/memory_service.py`：
 
 ```python
 def get_chat_context_messages(
@@ -984,9 +984,9 @@ def get_chat_context_messages(
     return context
 ```
 
-- [ ] **Step 4: Use composed context and save explicit memories in chat**
+- [ ] **步骤 4：在聊天流程中使用组合上下文并保存明确记忆**
 
-In `backend/app/routers/chat.py`, after this line:
+在 `backend/app/routers/chat.py` 中，在这一行后面：
 
 ```python
 user_message = memory_service.store_message(db, conv.id, "user", req.message.strip())
@@ -1001,13 +1001,13 @@ except Exception as error:
     print(f"Failed to store long-term memory: {error}")
 ```
 
-Replace:
+替换：
 
 ```python
 context = memory_service.get_context_messages(db, conv.id, current_model=chosen_model)
 ```
 
-with:
+为：
 
 ```python
 try:
@@ -1022,18 +1022,18 @@ except Exception as error:
     context = memory_service.get_context_messages(db, conv.id, current_model=chosen_model)
 ```
 
-- [ ] **Step 5: Run all backend unit tests**
+- [ ] **步骤 5：运行全部后端单元测试**
 
-Run:
+运行：
 
 ```bash
 cd backend
 PYTHONPATH=. python -m unittest discover tests -v
 ```
 
-Expected: all tests pass.
+预期：全部测试通过。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6：提交**
 
 ```bash
 git -C backend add app/routers/chat.py app/services/memory_service.py tests/test_long_term_memory_service.py tests/test_memory_service.py
@@ -1042,19 +1042,19 @@ git -C backend commit -m "feat: use long-term memory in chat"
 
 ---
 
-### Task 5: Frontend Memory Management
+### 任务 5：前端记忆管理
 
-**Files:**
-- Modify: `fronted/src/types.ts`
-- Modify: `fronted/src/services/api.ts`
-- Create: `fronted/src/components/MemorySettingsSection.tsx`
-- Modify: `fronted/src/components/SettingsDrawer.tsx`
-- Modify: `fronted/src/App.tsx`
-- Modify: `fronted/src/App.css`
+**文件：**
+- 修改：`fronted/src/types.ts`
+- 修改：`fronted/src/services/api.ts`
+- 新建：`fronted/src/components/MemorySettingsSection.tsx`
+- 修改：`fronted/src/components/SettingsDrawer.tsx`
+- 修改：`fronted/src/App.tsx`
+- 修改：`fronted/src/App.css`
 
-- [ ] **Step 1: Add frontend memory type**
+- [ ] **步骤 1：添加前端记忆类型**
 
-Add to `fronted/src/types.ts`:
+添加到 `fronted/src/types.ts`：
 
 ```ts
 export interface Memory {
@@ -1068,15 +1068,15 @@ export interface Memory {
 }
 ```
 
-- [ ] **Step 2: Add API client functions**
+- [ ] **步骤 2：添加 API 请求函数**
 
-Add `Memory` to the type import in `fronted/src/services/api.ts`:
+在 `fronted/src/services/api.ts` 的类型 import 中加入 `Memory`：
 
 ```ts
   Memory,
 ```
 
-Add these functions before `sendMessage`:
+在 `sendMessage` 前添加这些函数：
 
 ```ts
 export async function fetchMemories(): Promise<Memory[]> {
@@ -1128,9 +1128,9 @@ export async function deleteMemory(memoryId: string): Promise<void> {
 }
 ```
 
-- [ ] **Step 3: Create memory settings component**
+- [ ] **步骤 3：创建记忆设置组件**
 
-Create `fronted/src/components/MemorySettingsSection.tsx`:
+新建 `fronted/src/components/MemorySettingsSection.tsx`：
 
 ```tsx
 import type { Memory } from '../types';
@@ -1148,13 +1148,13 @@ interface MemorySettingsSectionProps {
 function getKindLabel(kind: string): string {
   switch (kind) {
     case 'preference':
-      return 'Preference';
+      return '偏好';
     case 'project':
-      return 'Project';
+      return '项目';
     case 'tool':
-      return 'Tool';
+      return '工具';
     default:
-      return 'Fact';
+      return '事实';
   }
 }
 
@@ -1170,24 +1170,24 @@ export default function MemorySettingsSection({
   return (
     <section className="settings-section">
       <div className="settings-section-head">
-        <h3>Memory</h3>
-        <span>{isLoading ? 'Loading' : `${memories.length} saved`}</span>
+        <h3>长期记忆</h3>
+        <span>{isLoading ? '加载中' : `已保存 ${memories.length} 条`}</span>
       </div>
 
       <div className="memory-create-row">
         <input
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
-          placeholder="Add a memory"
-          aria-label="Add a memory"
+          placeholder="添加一条记忆"
+          aria-label="添加一条记忆"
         />
         <button type="button" onClick={onCreate} disabled={!draft.trim()}>
-          Add
+          添加
         </button>
       </div>
 
       {memories.length === 0 ? (
-        <div className="settings-empty">No saved memories yet.</div>
+        <div className="settings-empty">还没有保存的记忆。</div>
       ) : (
         <div className="memory-list">
           {memories.map((memory) => (
@@ -1198,10 +1198,10 @@ export default function MemorySettingsSection({
               </div>
               <div className="memory-item-actions">
                 <button type="button" onClick={() => onToggle(memory)}>
-                  {memory.enabled ? 'Disable' : 'Enable'}
+                  {memory.enabled ? '停用' : '启用'}
                 </button>
                 <button type="button" onClick={() => onDelete(memory)}>
-                  Delete
+                  删除
                 </button>
               </div>
             </div>
@@ -1213,16 +1213,16 @@ export default function MemorySettingsSection({
 }
 ```
 
-- [ ] **Step 4: Wire section into settings drawer**
+- [ ] **步骤 4：把记忆区块接入设置抽屉**
 
-In `fronted/src/components/SettingsDrawer.tsx`, import:
+在 `fronted/src/components/SettingsDrawer.tsx` 中 import：
 
 ```tsx
 import MemorySettingsSection from './MemorySettingsSection';
 import type { Memory, ModelOption, ReasoningLevel } from '../types';
 ```
 
-Extend `SettingsDrawerProps`:
+扩展 `SettingsDrawerProps`：
 
 ```tsx
   memories: Memory[];
@@ -1234,7 +1234,7 @@ Extend `SettingsDrawerProps`:
   onDeleteMemory: (memory: Memory) => void;
 ```
 
-Add those props to the component destructuring, then render this after the reasoning section:
+将这些 props 加入组件解构，然后在 reasoning 区块后渲染：
 
 ```tsx
         <MemorySettingsSection
@@ -1248,15 +1248,15 @@ Add those props to the component destructuring, then render this after the reaso
         />
 ```
 
-- [ ] **Step 5: Own memory state in App**
+- [ ] **步骤 5：在 App 中管理记忆状态**
 
-In `fronted/src/App.tsx`, add `Memory` to the type import:
+在 `fronted/src/App.tsx` 中，把 `Memory` 加到类型 import：
 
 ```ts
   Memory,
 ```
 
-Add state near the settings state:
+在设置相关 state 附近添加：
 
 ```tsx
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -1264,7 +1264,7 @@ Add state near the settings state:
   const [isMemoriesLoading, setIsMemoriesLoading] = useState(false);
 ```
 
-Add a loader:
+添加加载函数：
 
 ```tsx
   const refreshMemories = useCallback(async () => {
@@ -1283,7 +1283,7 @@ Add a loader:
   }, []);
 ```
 
-Add an effect:
+添加 effect：
 
 ```tsx
   useEffect(() => {
@@ -1294,7 +1294,7 @@ Add an effect:
   }, [currentUser, isSettingsOpen, refreshMemories]);
 ```
 
-Add handlers:
+添加交互处理函数：
 
 ```tsx
   const handleCreateMemory = useCallback(async () => {
@@ -1340,7 +1340,7 @@ Add handlers:
   }, []);
 ```
 
-Pass props into `SettingsDrawer`:
+把这些 props 传给 `SettingsDrawer`：
 
 ```tsx
         memories={memories}
@@ -1352,9 +1352,9 @@ Pass props into `SettingsDrawer`:
         onDeleteMemory={handleDeleteMemory}
 ```
 
-- [ ] **Step 6: Add CSS**
+- [ ] **步骤 6：添加 CSS**
 
-Add to `fronted/src/App.css` after the existing settings styles:
+添加到 `fronted/src/App.css` 中现有 settings 样式后面：
 
 ```css
 .memory-create-row {
@@ -1443,18 +1443,18 @@ Add to `fronted/src/App.css` after the existing settings styles:
 }
 ```
 
-- [ ] **Step 7: Build frontend**
+- [ ] **步骤 7：构建前端**
 
-Run:
+运行：
 
 ```bash
 cd fronted
 npm run build
 ```
 
-Expected: build succeeds.
+预期：构建成功。
 
-- [ ] **Step 8: Commit**
+- [ ] **步骤 8：提交**
 
 ```bash
 git -C fronted add src/types.ts src/services/api.ts src/components/MemorySettingsSection.tsx src/components/SettingsDrawer.tsx src/App.tsx src/App.css
@@ -1463,104 +1463,104 @@ git -C fronted commit -m "feat: add memory management settings"
 
 ---
 
-### Task 6: Local PostgreSQL Verification
+### 任务 6：本地 PostgreSQL 验证
 
-**Files:**
-- No code files required.
+**文件：**
+- 不需要修改代码文件。
 
-- [ ] **Step 1: Create local PostgreSQL database**
+- [ ] **步骤 1：创建本地 PostgreSQL 数据库**
 
-Run using your local PostgreSQL setup:
+使用本地 PostgreSQL 环境运行：
 
 ```bash
 createdb llm_memory_chat
 ```
 
-Expected: database exists.
+预期：数据库创建成功。
 
-- [ ] **Step 2: Configure backend env**
+- [ ] **步骤 2：配置后端环境变量**
 
-Set `backend/.env` database line:
+将 `backend/.env` 的数据库连接改为：
 
 ```env
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/llm_memory_chat
 ```
 
-Keep existing model settings unchanged.
+保留现有模型相关配置不变。
 
-- [ ] **Step 3: Run migrations**
+- [ ] **步骤 3：运行数据库迁移**
 
-Run:
+运行：
 
 ```bash
 cd backend
 alembic upgrade head
 ```
 
-Expected: migration reaches `20260427_0002`.
+预期：迁移执行到 `20260427_0002`。
 
-- [ ] **Step 4: Run backend tests**
+- [ ] **步骤 4：运行后端测试**
 
-Run:
+运行：
 
 ```bash
 cd backend
 PYTHONPATH=. python -m unittest discover tests -v
 ```
 
-Expected: all tests pass.
+预期：全部测试通过。
 
-- [ ] **Step 5: Run backend server**
+- [ ] **步骤 5：启动后端服务**
 
-Run:
+运行：
 
 ```bash
 cd backend
 python run.py
 ```
 
-Expected: server starts and `/api/health` returns `{"status":"ok"}`.
+预期：服务启动成功，并且 `/api/health` 返回 `{"status":"ok"}`。
 
-- [ ] **Step 6: Manual memory verification**
+- [ ] **步骤 6：手动验证记忆功能**
 
-In the app:
+在应用里：
 
-1. Register or log in.
-2. Open settings.
-3. Add memory: `用户使用 PyCharm 开发 Python 项目`.
-4. Send chat message: `我这个 IDE 里怎么打开数据库？`.
-5. Confirm the assistant can use the PyCharm memory.
-6. Disable the memory in settings.
-7. Send a similar message again.
-8. Confirm the disabled memory is not used.
+1. 注册或登录。
+2. 打开设置。
+3. 添加记忆：`用户使用 PyCharm 开发 Python 项目`。
+4. 发送聊天消息：`我这个 IDE 里怎么打开数据库？`。
+5. 确认助手能使用 PyCharm 这条记忆。
+6. 在设置中停用这条记忆。
+7. 再发送一条类似消息。
+8. 确认已停用的记忆不会再被使用。
 
-- [ ] **Step 7: Final status check**
+- [ ] **步骤 7：最终状态检查**
 
-Run:
+运行：
 
 ```bash
 git -C backend status --short
 git -C fronted status --short
 ```
 
-Expected: both repositories show no unexpected uncommitted changes.
+预期：两个仓库都没有意外的未提交变更。
 
 ---
 
-## Self-Review
+## 自检
 
-Spec coverage:
+设计覆盖情况：
 
-- PostgreSQL: Task 1 and Task 6.
-- Alembic: Task 1 and Task 6.
-- `memories` table: Task 2.
-- Memory injection before model call: Task 4.
-- Explicit memory creation: Task 2 and Task 4.
-- Authenticated CRUD API: Task 3.
-- UI to view, disable, delete, and manually add memories: Task 5.
-- No embedding or pgvector in phase 1: no task adds vector fields, embedding config, or similarity search.
+- PostgreSQL：任务 1 和任务 6。
+- Alembic：任务 1 和任务 6。
+- `memories` 表：任务 2。
+- 模型调用前注入记忆：任务 4。
+- 明确记忆创建：任务 2 和任务 4。
+- 需要登录的 CRUD API：任务 3。
+- 查看、停用、删除、手动添加记忆的 UI：任务 5。
+- 第一阶段不做 embedding 或 pgvector：没有任何任务添加向量字段、embedding 配置或相似度搜索。
 
-Residual risk:
+剩余风险：
 
-- Existing SQLite data is not automatically imported into PostgreSQL. This plan treats PostgreSQL as a fresh local database. Add a separate data migration plan if existing chat history must be preserved.
-- The explicit-memory detector is intentionally conservative. It will not remember implicit preferences until a later phase adds safer extraction logic.
+- 现有 SQLite 数据不会自动导入 PostgreSQL。本计划默认 PostgreSQL 是一个新的本地数据库。如果必须保留现有聊天历史，需要单独制定数据迁移计划。
+- 明确记忆检测逻辑会故意保守。隐含偏好不会被自动记住，直到后续阶段加入更安全的抽取逻辑。
