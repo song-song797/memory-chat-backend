@@ -1,7 +1,7 @@
 import base64
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import get_model_label, settings
@@ -125,9 +125,10 @@ def get_chat_context_messages(
     user_id: str,
     conversation_id: str,
     current_model: str | None = None,
+    project_id: str | None = None,
 ) -> list[dict[str, object]]:
     context: list[dict[str, object]] = []
-    long_term_context = get_long_term_memory_context(db, user_id)
+    long_term_context = get_long_term_memory_context(db, user_id, project_id=project_id)
     if long_term_context:
         context.append(long_term_context)
     context.extend(get_context_messages(db, conversation_id, current_model=current_model))
@@ -177,6 +178,7 @@ def maybe_store_explicit_memory(
     db: Session,
     user_id: str,
     message: Message,
+    project_id: str | None = None,
 ) -> Memory | None:
     if message.role != "user" or not has_explicit_memory_intent(message.content):
         return None
@@ -184,11 +186,19 @@ def maybe_store_explicit_memory(
     content = _normalize_memory_content(message.content)
     if not content:
         return None
+    kind = _classify_memory(content)
+    scope = "global"
+    memory_project_id = None
+    if project_id is not None and kind in {"fact", "project", "tool"}:
+        scope = "project"
+        memory_project_id = project_id
 
     memory = Memory(
         user_id=user_id,
         content=content,
-        kind=_classify_memory(content),
+        kind=kind,
+        scope=scope,
+        project_id=memory_project_id,
         source_message_id=message.id,
     )
     db.add(memory)
@@ -200,24 +210,61 @@ def maybe_store_explicit_memory(
 def get_enabled_memories_for_context(
     db: Session,
     user_id: str,
+    project_id: str | None = None,
     limit: int = MAX_MEMORY_CONTEXT_ITEMS,
 ) -> list[Memory]:
+    scope_filter = Memory.scope == "global"
+    if project_id is not None:
+        scope_filter = or_(
+            Memory.scope == "global",
+            (Memory.scope == "project") & (Memory.project_id == project_id),
+        )
+
     stmt = (
         select(Memory)
-        .where(Memory.user_id == user_id, Memory.enabled.is_(True))
+        .where(
+            Memory.user_id == user_id,
+            Memory.enabled.is_(True),
+            Memory.status == "active",
+            scope_filter,
+        )
         .order_by(Memory.last_used_at.desc().nullslast(), Memory.updated_at.desc())
         .limit(limit)
     )
     return list(db.execute(stmt).scalars().all())
 
 
-def get_long_term_memory_context(db: Session, user_id: str) -> dict[str, str] | None:
-    memories = get_enabled_memories_for_context(db, user_id)
+def get_long_term_memory_context(
+    db: Session,
+    user_id: str,
+    project_id: str | None = None,
+) -> dict[str, str] | None:
+    memories = get_enabled_memories_for_context(db, user_id, project_id=project_id)
     if not memories:
         return None
 
-    lines = "\n".join(f"- {memory.content}" for memory in memories)
+    global_memories = [memory for memory in memories if memory.scope == "global"]
+    project_memories = [memory for memory in memories if memory.scope == "project"]
+    if project_id is None:
+        lines = "\n".join(f"- {memory.content}" for memory in global_memories)
+        return {
+            "role": "system",
+            "content": f"以下是关于当前用户的长期记忆。仅在与当前问题相关时使用：\n{lines}",
+        }
+
+    sections: list[str] = []
+    if global_memories:
+        global_lines = "\n".join(f"- {memory.content}" for memory in global_memories)
+        sections.append(f"全局长期记忆：\n{global_lines}")
+    if project_memories:
+        project_lines = "\n".join(f"- {memory.content}" for memory in project_memories)
+        sections.append(f"当前项目长期记忆：\n{project_lines}")
+
     return {
         "role": "system",
-        "content": f"以下是关于当前用户的长期记忆。仅在与当前问题相关时使用：\n{lines}",
+        "content": (
+            "以下是关于当前用户的长期记忆。仅在与当前问题相关时使用。"
+            "项目记忆与全局记忆冲突时，优先遵循当前项目长期记忆。\n"
+            + "\n\n".join(sections)
+        ),
     }

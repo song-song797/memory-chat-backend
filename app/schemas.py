@@ -12,6 +12,7 @@ def _serialize_datetime(value: datetime) -> str:
 
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
+    project_id: str | None = None
     message: str = Field(default="", max_length=10000)
     model: str | None = None
     reasoning_level: Literal["off", "standard", "deep"] | None = None

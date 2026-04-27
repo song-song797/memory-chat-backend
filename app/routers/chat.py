@@ -13,6 +13,7 @@ from ..schemas import ChatRequest, LandingChatRequest, ModelCatalog
 from ..services import llm_service, memory_service
 from ..services.attachment_service import save_attachments
 from ..services.auth_service import get_current_user
+from ..services.project_service import get_user_project
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -98,6 +99,7 @@ async def _parse_chat_request(request: Request) -> tuple[ChatRequest, list[Uploa
         uploads = [item for item in form.getlist("files") if isinstance(item, StarletteUploadFile)]
         chat_request = ChatRequest(
             conversation_id=form.get("conversation_id") or None,
+            project_id=form.get("project_id") or None,
             message=(form.get("message") or "").strip(),
             model=form.get("model") or None,
             reasoning_level=form.get("reasoning_level") or None,
@@ -127,8 +129,13 @@ async def chat(
         conv = db.get(Conversation, req.conversation_id)
         if not conv or conv.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        if req.project_id is not None and req.project_id != conv.project_id:
+            raise HTTPException(status_code=400, detail="Conversation project mismatch")
     else:
-        conv = Conversation(user_id=current_user.id)
+        project_id = None
+        if req.project_id:
+            project_id = get_user_project(db, current_user.id, req.project_id).id
+        conv = Conversation(user_id=current_user.id, project_id=project_id)
         db.add(conv)
         db.commit()
         db.refresh(conv)
@@ -161,7 +168,12 @@ async def chat(
         db.commit()
 
     try:
-        memory_service.maybe_store_explicit_memory(db, current_user.id, user_message)
+        memory_service.maybe_store_explicit_memory(
+            db,
+            current_user.id,
+            user_message,
+            project_id=conv.project_id,
+        )
     except Exception as error:
         db.rollback()
         print(f"Failed to store long-term memory: {error}")
@@ -172,6 +184,7 @@ async def chat(
             current_user.id,
             conv.id,
             current_model=chosen_model,
+            project_id=conv.project_id,
         )
     except Exception as error:
         db.rollback()
