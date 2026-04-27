@@ -13,6 +13,7 @@ from ..schemas import (
 )
 from ..services.auth_service import get_current_user
 from ..services.memory_service import get_conversation_messages
+from ..services.project_service import get_user_project
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -30,7 +31,12 @@ def create_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    conversation = Conversation(title=body.title, user_id=current_user.id)
+    project_id = None
+    if body.project_id:
+        project = get_user_project(db, current_user.id, body.project_id)
+        project_id = project.id
+
+    conversation = Conversation(title=body.title, user_id=current_user.id, project_id=project_id)
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
@@ -39,14 +45,15 @@ def create_conversation(
 
 @router.get("", response_model=list[ConversationOut])
 def list_conversations(
+    project_id: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    stmt = (
-        select(Conversation)
-        .where(Conversation.user_id == current_user.id)
-        .order_by(Conversation.pinned.desc(), Conversation.updated_at.desc())
-    )
+    stmt = select(Conversation).where(Conversation.user_id == current_user.id)
+    if project_id is not None:
+        get_user_project(db, current_user.id, project_id)
+        stmt = stmt.where(Conversation.project_id == project_id)
+    stmt = stmt.order_by(Conversation.pinned.desc(), Conversation.updated_at.desc())
     return list(db.execute(stmt).scalars().all())
 
 

@@ -30,6 +30,7 @@ class LandingChatRequest(BaseModel):
 
 class ConversationCreate(BaseModel):
     title: str = "\u65b0\u5bf9\u8bdd"
+    project_id: str | None = None
 
 
 class ConversationUpdate(BaseModel):
@@ -133,6 +134,7 @@ class ConversationOut(BaseModel):
     id: str
     title: str
     pinned: bool
+    project_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
