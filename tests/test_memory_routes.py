@@ -45,6 +45,11 @@ class MemoryRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return {"Authorization": f"Bearer {response.json()['token']}"}
 
+    def _create_project(self, headers: dict[str, str], name: str = "Memory Project") -> str:
+        response = self.client.post("/api/projects", json={"name": name}, headers=headers)
+        self.assertEqual(response.status_code, 201)
+        return response.json()["id"]
+
     def test_memory_crud(self) -> None:
         headers = self._register("owner@example.com")
 
@@ -202,6 +207,152 @@ class MemoryRoutesTests(unittest.TestCase):
 
         bob_delete = self.client.delete(f"/api/memories/{memory_id}", headers=bob_headers)
         self.assertEqual(bob_delete.status_code, 404)
+
+    def test_memory_scope_fields_and_project_filtering(self) -> None:
+        headers = self._register("scoped-memory@example.com")
+        project_id = self._create_project(headers)
+
+        global_response = self.client.post(
+            "/api/memories",
+            json={"content": "Global preference", "kind": "fact", "scope": "global"},
+            headers=headers,
+        )
+        self.assertEqual(global_response.status_code, 201)
+        global_memory = global_response.json()
+        self.assertEqual(global_memory["scope"], "global")
+        self.assertIsNone(global_memory["project_id"])
+        self.assertEqual(global_memory["status"], "active")
+        self.assertEqual(global_memory["importance"], 0)
+        self.assertIsNone(global_memory["superseded_by_id"])
+        self.assertIsNone(global_memory["archived_at"])
+        self.assertTrue(global_memory["enabled"])
+
+        project_response = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Project fact",
+                "kind": "fact",
+                "scope": "project",
+                "project_id": project_id,
+                "importance": 4,
+            },
+            headers=headers,
+        )
+        self.assertEqual(project_response.status_code, 201)
+        project_memory = project_response.json()
+        self.assertEqual(project_memory["scope"], "project")
+        self.assertEqual(project_memory["project_id"], project_id)
+        self.assertEqual(project_memory["importance"], 4)
+
+        project_list = self.client.get(
+            f"/api/memories?scope=project&project_id={project_id}",
+            headers=headers,
+        )
+        self.assertEqual(project_list.status_code, 200)
+        self.assertEqual([item["id"] for item in project_list.json()], [project_memory["id"]])
+
+        global_list = self.client.get("/api/memories?scope=global", headers=headers)
+        self.assertEqual(global_list.status_code, 200)
+        self.assertEqual([item["id"] for item in global_list.json()], [global_memory["id"]])
+
+    def test_memory_scope_validation_and_project_ownership(self) -> None:
+        alice_headers = self._register("alice-scoped-memory@example.com")
+        bob_headers = self._register("bob-scoped-memory@example.com")
+        alice_project_id = self._create_project(alice_headers, "Alice Project")
+
+        invalid_scope = self.client.get("/api/memories?scope=workspace", headers=alice_headers)
+        self.assertEqual(invalid_scope.status_code, 400)
+        self.assertEqual(invalid_scope.json()["detail"], "Invalid memory scope")
+
+        global_with_project = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Bad global memory",
+                "kind": "fact",
+                "scope": "global",
+                "project_id": alice_project_id,
+            },
+            headers=alice_headers,
+        )
+        self.assertEqual(global_with_project.status_code, 400)
+        self.assertEqual(global_with_project.json()["detail"], "Global memories cannot set project_id")
+
+        project_without_project_id = self.client.post(
+            "/api/memories",
+            json={"content": "Bad project memory", "kind": "fact", "scope": "project"},
+            headers=alice_headers,
+        )
+        self.assertEqual(project_without_project_id.status_code, 400)
+        self.assertEqual(
+            project_without_project_id.json()["detail"],
+            "Project memories require project_id",
+        )
+
+        bob_project_memory = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Wrong owner project memory",
+                "kind": "fact",
+                "scope": "project",
+                "project_id": alice_project_id,
+            },
+            headers=bob_headers,
+        )
+        self.assertEqual(bob_project_memory.status_code, 404)
+
+        bob_project_filter = self.client.get(
+            f"/api/memories?project_id={alice_project_id}",
+            headers=bob_headers,
+        )
+        self.assertEqual(bob_project_filter.status_code, 404)
+
+    def test_memory_status_archiving_filter_and_enabled_toggle(self) -> None:
+        headers = self._register("archive-memory@example.com")
+        create_response = self.client.post(
+            "/api/memories",
+            json={"content": "Memory to archive", "kind": "fact"},
+            headers=headers,
+        )
+        self.assertEqual(create_response.status_code, 201)
+        memory_id = create_response.json()["id"]
+
+        archive_response = self.client.put(
+            f"/api/memories/{memory_id}",
+            json={"status": "archived", "enabled": False},
+            headers=headers,
+        )
+        self.assertEqual(archive_response.status_code, 200)
+        archived = archive_response.json()
+        self.assertEqual(archived["status"], "archived")
+        self.assertIsNotNone(archived["archived_at"])
+        self.assertFalse(archived["enabled"])
+
+        active_list = self.client.get("/api/memories", headers=headers)
+        self.assertEqual(active_list.status_code, 200)
+        self.assertEqual(active_list.json(), [])
+
+        archived_list = self.client.get("/api/memories?include_archived=true", headers=headers)
+        self.assertEqual(archived_list.status_code, 200)
+        self.assertEqual([item["id"] for item in archived_list.json()], [memory_id])
+
+        reactivate_response = self.client.put(
+            f"/api/memories/{memory_id}",
+            json={"status": "active"},
+            headers=headers,
+        )
+        self.assertEqual(reactivate_response.status_code, 200)
+        reactivated = reactivate_response.json()
+        self.assertEqual(reactivated["status"], "active")
+        self.assertIsNone(reactivated["archived_at"])
+        self.assertFalse(reactivated["enabled"])
+
+        invalid_status = self.client.put(
+            f"/api/memories/{memory_id}",
+            json={"status": "deleted"},
+            headers=headers,
+        )
+        self.assertEqual(invalid_status.status_code, 400)
+        self.assertEqual(invalid_status.json()["detail"], "Invalid memory status")
 
 
 if __name__ == "__main__":

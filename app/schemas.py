@@ -152,12 +152,22 @@ class ConversationDetail(ConversationOut):
 class MemoryCreate(BaseModel):
     content: str = Field(..., max_length=1000)
     kind: str = Field(default="fact", max_length=40)
+    scope: str = Field(default="global", max_length=20)
+    project_id: str | None = None
+    status: str = Field(default="active", max_length=20)
+    importance: int = 0
+    superseded_by_id: str | None = None
 
 
 class MemoryUpdate(BaseModel):
     content: str | None = Field(default=None, max_length=1000)
     kind: str | None = Field(default=None, max_length=40)
     enabled: bool | None = None
+    scope: str | None = Field(default=None, max_length=20)
+    project_id: str | None = None
+    status: str | None = Field(default=None, max_length=20)
+    importance: int | None = None
+    superseded_by_id: str | None = None
 
 
 class MemoryOut(BaseModel):
@@ -165,13 +175,19 @@ class MemoryOut(BaseModel):
     content: str
     kind: str
     enabled: bool
+    scope: str
+    project_id: str | None = None
+    status: str
+    importance: int
+    superseded_by_id: str | None = None
     created_at: datetime
     updated_at: datetime
     last_used_at: datetime | None = None
+    archived_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
-    @field_serializer("created_at", "updated_at", "last_used_at")
+    @field_serializer("created_at", "updated_at", "last_used_at", "archived_at")
     def serialize_memory_datetimes(self, value: datetime | None) -> str | None:
         if value is None:
             return None
