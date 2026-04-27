@@ -64,6 +64,41 @@ class AuthResponse(BaseModel):
     user: UserOut
 
 
+class ProjectCreate(BaseModel):
+    name: str = Field(..., max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    default_model: str | None = Field(default=None, max_length=100)
+    default_reasoning_level: Literal["off", "standard", "deep"] | None = None
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    default_model: str | None = Field(default=None, max_length=100)
+    default_reasoning_level: Literal["off", "standard", "deep"] | None = None
+    archived: bool | None = None
+
+
+class ProjectOut(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    default_model: str | None = None
+    default_reasoning_level: str | None = None
+    is_default: bool
+    archived_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("created_at", "updated_at", "archived_at")
+    def serialize_project_datetimes(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return _serialize_datetime(value)
+
+
 class AttachmentOut(BaseModel):
     id: str
     name: str
