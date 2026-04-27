@@ -33,6 +33,11 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="UserSession.created_at.desc()",
     )
+    memories: Mapped[list["Memory"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="Memory.updated_at.desc()",
+    )
 
 
 class Conversation(Base):
@@ -75,6 +80,29 @@ class Message(Base):
         cascade="all, delete-orphan",
         order_by="Attachment.created_at",
     )
+
+
+class Memory(Base):
+    __tablename__ = "memories"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    content: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(40), default="fact")
+    source_message_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="memories")
+    source_message: Mapped["Message | None"] = relationship()
 
 
 class Attachment(Base):

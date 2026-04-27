@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import quote
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -102,7 +103,13 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-3.5-turbo"
-    DATABASE_URL: str = _default_database_url()
+    DATABASE_URL: str = ""
+    DB_DRIVER: str = "sqlite"
+    DB_HOST: str = ""
+    DB_PORT: str = ""
+    DB_NAME: str = "./chat.db"
+    DB_USER: str = ""
+    DB_PASSWORD: str = ""
     CONTEXT_WINDOW_SIZE: int = 20
     APP_TIMEZONE: str = "Asia/Shanghai"
 
@@ -110,6 +117,33 @@ class Settings(BaseSettings):
         env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
     )
+
+
+def get_database_url(config: Settings | None = None) -> str:
+    config = config or settings
+    if config.DATABASE_URL.strip():
+        return config.DATABASE_URL.strip()
+
+    driver = config.DB_DRIVER.strip()
+    db_name = config.DB_NAME.strip()
+    if driver.startswith("sqlite"):
+        if not db_name:
+            return _default_database_url()
+        if db_name == ":memory:":
+            return "sqlite:///:memory:"
+        return f"sqlite:///{db_name}"
+
+    user = quote(config.DB_USER.strip(), safe="")
+    password = quote(config.DB_PASSWORD, safe="")
+    auth = ""
+    if user:
+        auth = user
+        if password:
+            auth = f"{auth}:{password}"
+        auth = f"{auth}@"
+
+    port = f":{config.DB_PORT.strip()}" if config.DB_PORT.strip() else ""
+    return f"{driver}://{auth}{config.DB_HOST.strip()}{port}/{db_name}"
 
 
 settings = Settings()

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routers import attachments, auth, chat, conversations
+from .routers import attachments, auth, chat, conversations, memories
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.include_router(chat.router)
 app.include_router(conversations.router)
 app.include_router(attachments.router)
 app.include_router(auth.router)
+app.include_router(memories.router)
 
 
 @app.get("/api/health")

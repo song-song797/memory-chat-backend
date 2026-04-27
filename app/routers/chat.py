@@ -160,7 +160,23 @@ async def chat(
         conv.title = title_source[:50] + ("..." if len(title_source) > 50 else "")
         db.commit()
 
-    context = memory_service.get_context_messages(db, conv.id, current_model=chosen_model)
+    try:
+        memory_service.maybe_store_explicit_memory(db, current_user.id, user_message)
+    except Exception as error:
+        db.rollback()
+        print(f"Failed to store long-term memory: {error}")
+
+    try:
+        context = memory_service.get_chat_context_messages(
+            db,
+            current_user.id,
+            conv.id,
+            current_model=chosen_model,
+        )
+    except Exception as error:
+        db.rollback()
+        print(f"Failed to load long-term memory context: {error}")
+        context = memory_service.get_context_messages(db, conv.id, current_model=chosen_model)
     conv_id = conv.id
 
     async def event_stream():

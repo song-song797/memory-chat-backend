@@ -1,113 +1,113 @@
-# Long-Term Memory Phase 1 Design
+# 长期记忆第一阶段设计
 
-## Goal
+## 目标
 
-Build a first usable version of long-term memory for the chat app without adding embedding or pgvector yet.
+为聊天应用做出第一版可用的长期记忆功能，但本阶段暂时不加入 embedding 和 pgvector。
 
-The business goal is to let the assistant remember durable user preferences and project facts across conversations, while keeping the system easy to inspect, correct, and migrate. This phase should prove whether memory improves the chat experience before adding semantic vector search.
+业务目标是让助手能跨会话记住稳定的用户偏好和项目事实，同时保持系统容易查看、容易纠错、容易迁移。这个阶段先验证“长期记忆”本身是否真的改善聊天体验，再决定是否进入语义向量检索阶段。
 
-## Current State
+## 当前状态
 
-The backend stores users, sessions, conversations, messages, and attachments with SQLAlchemy. Chat context currently comes from the latest `CONTEXT_WINDOW_SIZE` messages in the active conversation.
+后端目前使用 SQLAlchemy 存储用户、登录会话、聊天会话、消息和附件。聊天上下文来自当前会话最近的 `CONTEXT_WINDOW_SIZE` 条消息。
 
-The app uses SQLite through `DATABASE_URL`. Schema changes are currently handled by `Base.metadata.create_all()` plus small manual `ALTER TABLE` checks in `init_db()`.
+应用目前通过 `DATABASE_URL` 使用 SQLite。数据库结构变化现在主要依赖 `Base.metadata.create_all()`，再加上 `init_db()` 里少量手写 `ALTER TABLE` 检查。
 
-There is no durable user-level memory table, no migration history, and no memory management UI.
+现在还没有用户级长期记忆表，没有数据库迁移历史，也没有记忆管理界面。
 
-## Phase 1 Scope
+## 第一阶段范围
 
-Phase 1 includes:
+第一阶段包含：
 
-- Move local development database configuration to PostgreSQL.
-- Add Alembic so schema changes are versioned.
-- Add a `memories` table for user-scoped long-term memory.
-- Inject enabled memories into chat context before each model call.
-- Save explicit, durable memories when the user asks the assistant to remember something.
-- Add a simple UI path to view, disable, or delete memories.
+- 将本地开发数据库配置切到 PostgreSQL。
+- 引入 Alembic，让数据库结构变化有版本记录。
+- 新增 `memories` 表，用来存用户级长期记忆。
+- 每次调用模型前，将启用状态的记忆注入聊天上下文。
+- 当用户明确要求助手“记住”某些信息时，保存一条长期记忆。
+- 增加一个简单的界面入口，用来查看、停用或删除记忆。
 
-Phase 1 excludes:
+第一阶段不包含：
 
-- Embedding models.
-- pgvector similarity search.
-- Automatic memory extraction from every conversation.
-- Complex memory merging, conflict resolution, or scoring.
+- Embedding 模型。
+- pgvector 相似度检索。
+- 从每一轮对话里自动抽取记忆。
+- 复杂的记忆合并、冲突处理或评分系统。
 
-## Data Model
+## 数据模型
 
-Add a `Memory` model backed by a `memories` table:
+新增一个 `Memory` 模型，对应 `memories` 表：
 
-- `id`: string primary key.
-- `user_id`: foreign key to `users.id`.
-- `content`: durable memory text.
-- `kind`: simple category such as `preference`, `project`, `tool`, or `fact`.
-- `source_message_id`: optional foreign key to the user message that created it.
-- `enabled`: boolean flag for whether the memory can be used.
-- `created_at`: creation timestamp.
-- `updated_at`: last update timestamp.
-- `last_used_at`: optional timestamp updated when injected into chat context.
+- `id`：字符串主键。
+- `user_id`：关联 `users.id` 的外键。
+- `content`：长期记忆内容。
+- `kind`：简单分类，例如 `preference`、`project`、`tool` 或 `fact`。
+- `source_message_id`：可选字段，指向创建这条记忆的用户消息。
+- `enabled`：布尔值，表示这条记忆是否可以被使用。
+- `created_at`：创建时间。
+- `updated_at`：最后更新时间。
+- `last_used_at`：可选字段，记录这条记忆最后一次被注入上下文的时间。
 
-The table should be plain PostgreSQL-compatible SQLAlchemy. No vector column is added in this phase.
+这张表只使用普通 PostgreSQL 兼容字段和 SQLAlchemy 模型。本阶段不添加向量字段。
 
-## Chat Flow
+## 聊天流程
 
-When a user sends a message:
+用户发送消息时：
 
-1. Save the user message as the app does today.
-2. Detect explicit memory intent with conservative rules, such as messages containing "记住", "以后你要记得", or "以后回答我时".
-3. If the message has explicit memory intent, save a short memory record linked to the current user and source message.
-4. Load recent conversation messages as short-term context.
-5. Load enabled memories for the current user, ordered by recent use and creation time.
-6. Add those memories to the model input as a system/context message before the recent conversation context.
-7. Stream the assistant response and save it as today.
+1. 像现在一样保存用户消息。
+2. 用保守规则判断是否存在明确记忆意图，例如消息里包含“记住”“以后你要记得”“以后回答我时”。
+3. 如果存在明确记忆意图，就保存一条简短记忆，并关联当前用户和来源消息。
+4. 读取当前会话最近消息，作为短期上下文。
+5. 读取当前用户启用中的长期记忆，按最近使用时间和创建时间排序。
+6. 将这些长期记忆作为 system/context 消息放到近期对话上下文前面。
+7. 流式返回助手回答，并像现在一样保存助手消息。
 
-Memory injection should be limited to a small number of records so the prompt stays readable and inexpensive.
+记忆注入数量需要限制在较小范围，避免提示词变长、变乱、变贵。
 
-## API Surface
+## API 设计
 
-Add authenticated memory endpoints under `/api/memories`:
+新增需要登录的记忆接口，统一放在 `/api/memories` 下：
 
-- `GET /api/memories`: list current user's memories.
-- `POST /api/memories`: create a manual memory.
-- `PUT /api/memories/{memory_id}`: update content, kind, or enabled state.
-- `DELETE /api/memories/{memory_id}`: delete a memory.
+- `GET /api/memories`：列出当前用户的长期记忆。
+- `POST /api/memories`：手动新增一条记忆。
+- `PUT /api/memories/{memory_id}`：更新记忆内容、分类或启用状态。
+- `DELETE /api/memories/{memory_id}`：删除一条记忆。
 
-All endpoints must require the current authenticated user and enforce user ownership.
+所有接口都必须要求当前登录用户，并且必须校验记忆属于当前用户。
 
-## Frontend
+## 前端
 
-Add a compact memory management entry in settings:
+在设置面板里增加一个紧凑的记忆管理入口：
 
-- Show whether long-term memory is available.
-- List saved memories.
-- Allow disabling or deleting a memory.
-- Allow manually adding a memory.
+- 展示长期记忆是否可用。
+- 列出已经保存的记忆。
+- 允许停用或删除某条记忆。
+- 允许手动新增一条记忆。
 
-The first version should be functional and restrained. It should not introduce a large new page unless the existing settings drawer becomes too crowded.
+第一版界面应当实用、克制。如果设置抽屉变得太拥挤，再考虑拆成独立页面。
 
-## Error Handling
+## 错误处理
 
-If memory retrieval fails during chat, the chat request should still continue without long-term memory and log the failure on the backend.
+如果聊天时读取长期记忆失败，聊天请求仍然继续，只是不带长期记忆，并在后端记录失败原因。
 
-If memory creation fails after the user message is saved, the chat request should still continue. The memory failure should not prevent the assistant from answering.
+如果保存用户消息后，自动创建长期记忆失败，聊天请求仍然继续。记忆保存失败不能阻止助手回答。
 
-Database migration failures should fail startup or deployment loudly rather than being silently ignored.
+数据库迁移失败时应该明确失败并阻止启动或部署，不能静默忽略。
 
-## Testing
+## 测试
 
-Backend tests should cover:
+后端测试需要覆盖：
 
-- Memory CRUD enforces user ownership.
-- Explicit memory intent creates a memory.
-- Non-explicit messages do not create memories.
-- Enabled memories are injected into chat context.
-- Disabled memories are not injected.
+- 记忆 CRUD 必须校验用户归属。
+- 明确记忆意图会创建记忆。
+- 非明确记忆消息不会创建记忆。
+- 启用的记忆会被注入聊天上下文。
+- 停用的记忆不会被注入聊天上下文。
 
-Existing memory context tests should continue to pass.
+现有短期上下文测试需要继续通过。
 
-Frontend tests are not currently established in this project. Manual verification should cover creating, disabling, deleting, and seeing memory used in a follow-up chat.
+前端当前没有稳定测试体系。需要手动验证：新增记忆、停用记忆、删除记忆，以及后续聊天中记忆是否生效。
 
-## Future Phase
+## 后续阶段
 
-Phase 2 can add embedding and pgvector after Phase 1 validates memory behavior.
+第二阶段可以在第一阶段验证记忆体验后，再加入 embedding 和 pgvector。
 
-That later phase should add vector columns, embedding configuration, backfill existing memories, and retrieve only semantically relevant memories instead of injecting a small recent/enabled set.
+那一阶段再添加向量字段、embedding 配置、旧记忆向量回填，并从“注入少量启用记忆”升级为“只检索语义相关记忆”。
