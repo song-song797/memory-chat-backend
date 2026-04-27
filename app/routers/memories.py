@@ -10,6 +10,13 @@ from ..services.auth_service import get_current_user
 router = APIRouter(prefix="/api/memories", tags=["memories"])
 
 
+def _trim_required(value: str, field_name: str) -> str:
+    trimmed = value.strip()
+    if not trimmed:
+        raise HTTPException(status_code=400, detail=f"Memory {field_name} cannot be empty")
+    return trimmed
+
+
 def _get_user_memory(db: Session, user_id: str, memory_id: str) -> Memory:
     memory = db.get(Memory, memory_id)
     if not memory or memory.user_id != user_id:
@@ -36,7 +43,11 @@ def create_memory(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    memory = Memory(user_id=current_user.id, content=body.content.strip(), kind=body.kind.strip())
+    memory = Memory(
+        user_id=current_user.id,
+        content=_trim_required(body.content, "content"),
+        kind=_trim_required(body.kind, "kind"),
+    )
     db.add(memory)
     db.commit()
     db.refresh(memory)
@@ -55,9 +66,9 @@ def update_memory(
         raise HTTPException(status_code=400, detail="No memory changes provided")
 
     if body.content is not None:
-        memory.content = body.content.strip()
+        memory.content = _trim_required(body.content, "content")
     if body.kind is not None:
-        memory.kind = body.kind.strip()
+        memory.kind = _trim_required(body.kind, "kind")
     if body.enabled is not None:
         memory.enabled = body.enabled
 
