@@ -1,10 +1,11 @@
 import base64
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import get_model_label, settings
-from ..models import Attachment, Conversation, Message
+from ..models import Attachment, Conversation, Memory, Message
 from .attachment_service import get_attachment_path
 
 
@@ -22,7 +23,6 @@ def store_message(
     # Update conversation's updated_at
     conv = db.get(Conversation, conversation_id)
     if conv:
-        from datetime import datetime, timezone
         conv.updated_at = datetime.now(timezone.utc)
 
     db.commit()
@@ -129,3 +129,87 @@ def get_conversation_messages(db: Session, conversation_id: str) -> list[Message
         .order_by(Message.created_at.asc())
     )
     return list(db.execute(stmt).scalars().all())
+
+
+MEMORY_INTENT_MARKERS = ("记住", "请记住", "以后你要记得", "以后回答我时")
+MAX_MEMORY_CONTEXT_ITEMS = 12
+MAX_MEMORY_CONTENT_LENGTH = 500
+
+
+def has_explicit_memory_intent(content: str) -> bool:
+    normalized = content.strip()
+    return any(marker in normalized for marker in MEMORY_INTENT_MARKERS)
+
+
+def _classify_memory(content: str) -> str:
+    if any(token in content for token in ("PyCharm", "IDE", "Python", "FastAPI", "React", "PostgreSQL")):
+        return "tool"
+    if any(token in content for token in ("项目", "后端", "前端", "数据库", "接口")):
+        return "project"
+    if any(token in content for token in ("喜欢", "习惯", "偏好", "以后回答")):
+        return "preference"
+    return "fact"
+
+
+def _normalize_memory_content(content: str) -> str:
+    normalized = " ".join(content.strip().split())
+    for marker in MEMORY_INTENT_MARKERS:
+        normalized = normalized.replace(marker, "")
+    normalized = normalized.strip(" ，。:：")
+    return normalized[:MAX_MEMORY_CONTENT_LENGTH]
+
+
+def maybe_store_explicit_memory(
+    db: Session,
+    user_id: str,
+    message: Message,
+) -> Memory | None:
+    if message.role != "user" or not has_explicit_memory_intent(message.content):
+        return None
+
+    content = _normalize_memory_content(message.content)
+    if not content:
+        return None
+
+    memory = Memory(
+        user_id=user_id,
+        content=content,
+        kind=_classify_memory(content),
+        source_message_id=message.id,
+    )
+    db.add(memory)
+    db.commit()
+    db.refresh(memory)
+    return memory
+
+
+def get_enabled_memories_for_context(
+    db: Session,
+    user_id: str,
+    limit: int = MAX_MEMORY_CONTEXT_ITEMS,
+) -> list[Memory]:
+    stmt = (
+        select(Memory)
+        .where(Memory.user_id == user_id, Memory.enabled.is_(True))
+        .order_by(Memory.last_used_at.desc().nullslast(), Memory.updated_at.desc())
+        .limit(limit)
+    )
+    memories = list(db.execute(stmt).scalars().all())
+    if memories:
+        now = datetime.now(timezone.utc)
+        for memory in memories:
+            memory.last_used_at = now
+        db.commit()
+    return memories
+
+
+def get_long_term_memory_context(db: Session, user_id: str) -> dict[str, str] | None:
+    memories = get_enabled_memories_for_context(db, user_id)
+    if not memories:
+        return None
+
+    lines = "\n".join(f"- {memory.content}" for memory in memories)
+    return {
+        "role": "system",
+        "content": f"以下是关于当前用户的长期记忆。仅在与当前问题相关时使用：\n{lines}",
+    }

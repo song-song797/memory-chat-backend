@@ -112,6 +112,35 @@ class ConversationDetail(ConversationOut):
     messages: list[MessageOut] = []
 
 
+class MemoryCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=1000)
+    kind: str = Field(default="fact", max_length=40)
+
+
+class MemoryUpdate(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=1000)
+    kind: str | None = Field(default=None, max_length=40)
+    enabled: bool | None = None
+
+
+class MemoryOut(BaseModel):
+    id: str
+    content: str
+    kind: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+    last_used_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("created_at", "updated_at", "last_used_at")
+    def serialize_memory_datetimes(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return _serialize_datetime(value)
+
+
 class ModelOption(BaseModel):
     id: str
     label: str
