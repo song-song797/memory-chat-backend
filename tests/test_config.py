@@ -1,6 +1,6 @@
 import unittest
 
-from app.config import Settings, get_database_url
+from app.config import Settings, get_database_url, get_memory_model
 
 
 class ConfigTests(unittest.TestCase):
@@ -34,6 +34,24 @@ class ConfigTests(unittest.TestCase):
         )
 
         self.assertEqual(get_database_url(config), "sqlite:///:memory:")
+
+    def test_memory_model_uses_dedicated_memory_setting(self) -> None:
+        config = Settings(
+            _env_file=None,
+            OPENAI_MODEL="qwen3-coder-next",
+            MEMORY_MODEL="qwen3.5-plus",
+        )
+
+        self.assertEqual(get_memory_model(config), "qwen3.5-plus")
+
+    def test_memory_model_falls_back_to_default_chat_model_when_unset(self) -> None:
+        config = Settings(
+            _env_file=None,
+            OPENAI_MODEL="qwen3-coder-next",
+            MEMORY_MODEL="",
+        )
+
+        self.assertEqual(get_memory_model(config), "qwen3-coder-next")
 
 
 if __name__ == "__main__":

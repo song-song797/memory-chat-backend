@@ -6,11 +6,24 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from ..config import AVAILABLE_MODEL_OPTIONS, get_default_model, get_supported_model_ids
+from ..config import (
+    AVAILABLE_MODEL_OPTIONS,
+    get_default_model,
+    get_memory_model,
+    get_supported_model_ids,
+    settings,
+)
 from ..database import SessionLocal, get_db
 from ..models import Conversation, User
 from ..schemas import ChatRequest, LandingChatRequest, ModelCatalog
-from ..services import llm_service, memory_service
+from ..services import (
+    conversation_memory_service,
+    llm_service,
+    memory_candidate_service,
+    memory_document_service,
+    memory_extraction_service,
+    memory_service,
+)
 from ..services.attachment_service import save_attachments
 from ..services.auth_service import get_current_user
 from ..services.project_service import get_user_project
@@ -111,6 +124,105 @@ async def _parse_chat_request(request: Request) -> tuple[ChatRequest, list[Uploa
     return ChatRequest(**payload), []
 
 
+async def _extract_and_store_memory_candidate(
+    *,
+    user_id: str,
+    project_id: str | None,
+    conversation_id: str | None,
+    source_message_id: str | None,
+    user_content: str,
+    model: str | None,
+) -> None:
+    if not settings.MEMORY_AUTO_SUGGESTIONS_ENABLED:
+        return
+    if memory_service.has_explicit_memory_intent(user_content):
+        return
+
+    db = SessionLocal()
+    try:
+        existing_memories = memory_service.get_enabled_memories_for_context(
+            db,
+            user_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+        )
+        memory_model = get_memory_model()
+        candidate = await memory_extraction_service.extract_memory_candidate(
+            user_content,
+            project_id,
+            conversation_id,
+            existing_memories,
+            model=memory_model,
+        )
+        if candidate is None:
+            return
+
+        scope, resolved_project_id, resolved_conversation_id = (
+            memory_extraction_service.resolve_candidate_scope(
+                project_id=project_id,
+                conversation_id=conversation_id,
+                kind=candidate.kind,
+                suggested_scope=candidate.scope,
+            )
+        )
+        if scope is None:
+            return
+
+        if scope == "conversation" and settings.MEMORY_CONVERSATION_AUTO_ACCEPT:
+            memory_candidate_service.auto_accept_memory_candidate(
+                db,
+                user_id=user_id,
+                scope=scope,
+                project_id=resolved_project_id,
+                conversation_id=resolved_conversation_id,
+                action=candidate.action,
+                target_memory_id=candidate.target_memory_id,
+                content=candidate.content,
+                kind=candidate.kind,
+                confidence=candidate.confidence,
+                importance=candidate.importance,
+                reason=candidate.reason,
+                source_message_id=source_message_id,
+                extraction_model=memory_model,
+            )
+            await conversation_memory_service.compact_conversation_memories(
+                db,
+                user_id=user_id,
+                conversation_id=resolved_conversation_id,
+            )
+            await memory_document_service.rebuild_memory_document(
+                db,
+                user_id=user_id,
+                scope="conversation",
+                conversation_id=resolved_conversation_id,
+            )
+            return
+
+        surface = memory_extraction_service.choose_candidate_surface(candidate)
+        memory_candidate_service.create_memory_candidate(
+            db,
+            user_id=user_id,
+            scope=scope,
+            project_id=resolved_project_id,
+            conversation_id=resolved_conversation_id,
+            action=candidate.action,
+            target_memory_id=candidate.target_memory_id,
+            content=candidate.content,
+            kind=candidate.kind,
+            confidence=candidate.confidence,
+            importance=candidate.importance,
+            reason=candidate.reason,
+            surface=surface,
+            source_message_id=source_message_id,
+            extraction_model=memory_model,
+        )
+    except Exception as error:
+        db.rollback()
+        print(f"Failed to extract memory candidate: {error}")
+    finally:
+        db.close()
+
+
 @router.post("/chat")
 async def chat(
     request: Request,
@@ -167,16 +279,111 @@ async def chat(
         conv.title = title_source[:50] + ("..." if len(title_source) > 50 else "")
         db.commit()
 
+    memory_state_notice: dict[str, str] | None = None
     try:
-        memory_service.maybe_store_explicit_memory(
-            db,
-            current_user.id,
+        explicit_memory_values = memory_service.get_explicit_memory_values(
             user_message,
             project_id=conv.project_id,
+            conversation_id=conv.id,
         )
+        if explicit_memory_values is not None:
+            scope = explicit_memory_values["scope"] or "global"
+            project_id = explicit_memory_values["project_id"]
+            conversation_id = explicit_memory_values["conversation_id"]
+            content = explicit_memory_values["content"] or ""
+            kind = explicit_memory_values["kind"] or "fact"
+            match_action, target_memory = memory_candidate_service.find_existing_memory_match(
+                db,
+                user_id=current_user.id,
+                scope=scope,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                content=content,
+                kind=kind,
+            )
+            if match_action == "duplicate":
+                memory_state_notice = {
+                    "role": "system",
+                    "content": (
+                        "用户刚刚要求记录一条长期记忆，但系统发现同作用域内已经有等价的已确认记忆。"
+                        "不要说刚刚新增或覆盖了记忆；请简短说明这条记忆已经存在，无需重复保存。"
+                    ),
+                }
+            else:
+                candidate_action = "update" if match_action == "update" else "create"
+                if scope == "conversation" and settings.MEMORY_CONVERSATION_AUTO_ACCEPT:
+                    memory_candidate_service.auto_accept_memory_candidate(
+                        db,
+                        user_id=current_user.id,
+                        scope=scope,
+                        project_id=project_id,
+                        conversation_id=conversation_id,
+                        action=candidate_action,
+                        target_memory_id=target_memory.id if target_memory is not None else None,
+                        content=content,
+                        kind=kind,
+                        confidence=100,
+                        importance=100,
+                        reason=(
+                            "用户明确要求更新当前会话记忆。"
+                            if candidate_action == "update"
+                            else "用户明确要求记录当前会话记忆。"
+                        ),
+                        source_message_id=user_message.id,
+                        extraction_model=get_memory_model(),
+                    )
+                    await conversation_memory_service.compact_conversation_memories(
+                        db,
+                        user_id=current_user.id,
+                        conversation_id=conversation_id,
+                    )
+                    await memory_document_service.rebuild_memory_document(
+                        db,
+                        user_id=current_user.id,
+                        scope="conversation",
+                        conversation_id=conversation_id,
+                    )
+                    memory_state_notice = {
+                        "role": "system",
+                        "content": (
+                            "用户刚刚要求记录或更新当前会话记忆。"
+                            "系统已经自动保存到当前会话记忆，不需要用户在提示卡片中确认。"
+                            "回答时可以简短说明当前会话记忆已更新。"
+                        ),
+                    }
+                else:
+                    memory_candidate_service.create_memory_candidate(
+                        db,
+                        user_id=current_user.id,
+                        scope=scope,
+                        project_id=project_id,
+                        conversation_id=conversation_id,
+                        action=candidate_action,
+                        target_memory_id=target_memory.id if target_memory is not None else None,
+                        content=content,
+                        kind=kind,
+                        confidence=100,
+                        importance=100,
+                        reason=(
+                            "用户明确要求更新这条信息。"
+                            if candidate_action == "update"
+                            else "用户明确要求记住这条信息。"
+                        ),
+                        surface="inline",
+                        source_message_id=user_message.id,
+                        extraction_model=None,
+                    )
+                    memory_state_notice = {
+                        "role": "system",
+                        "content": (
+                            "用户刚刚提出了需要记录或更新长期记忆的内容。"
+                            "系统目前只创建了待确认的候选记忆，尚未正式保存或覆盖任何长期记忆。"
+                            "回答时不要说已经记住、已经保存或已经覆盖；请说明需要用户在右侧提示卡片中确认后才会生效。"
+                        ),
+                    }
     except Exception as error:
         db.rollback()
-        print(f"Failed to store long-term memory: {error}")
+        print(f"Failed to create explicit memory candidate: {error}")
 
     try:
         context = memory_service.get_chat_context_messages(
@@ -190,7 +397,14 @@ async def chat(
         db.rollback()
         print(f"Failed to load long-term memory context: {error}")
         context = memory_service.get_context_messages(db, conv.id, current_model=chosen_model)
+    if memory_state_notice is not None:
+        context.append(memory_state_notice)
     conv_id = conv.id
+    conv_project_id = conv.project_id
+    user_id = current_user.id
+    user_content = user_message.content
+    user_message_id = user_message.id
+    is_explicit_memory_request = memory_service.has_explicit_memory_intent(user_content)
 
     async def event_stream():
         full_response: list[str] = []
@@ -226,6 +440,17 @@ async def chat(
                     )
                 finally:
                     save_db.close()
+                if not is_explicit_memory_request:
+                    asyncio.create_task(
+                        _extract_and_store_memory_candidate(
+                            user_id=user_id,
+                            project_id=conv_project_id,
+                            conversation_id=conv_id,
+                            source_message_id=user_message_id,
+                            user_content=user_content,
+                            model=chosen_model,
+                        )
+                    )
 
         if not stream_cancelled:
             yield "data: [DONE]\n\n"

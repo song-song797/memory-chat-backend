@@ -82,6 +82,12 @@ def get_default_model() -> str:
     return AVAILABLE_MODEL_OPTIONS[0]["id"]
 
 
+def get_memory_model(config: "Settings | None" = None) -> str:
+    config = config or settings
+    memory_model = config.MEMORY_MODEL.strip()
+    return memory_model or config.OPENAI_MODEL
+
+
 def get_model_option(model_id: str) -> dict[str, str | bool] | None:
     return next((item for item in AVAILABLE_MODEL_OPTIONS if item["id"] == model_id), None)
 
@@ -103,6 +109,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-3.5-turbo"
+    MEMORY_MODEL: str = ""
     DATABASE_URL: str = ""
     DB_DRIVER: str = "sqlite"
     DB_HOST: str = ""
@@ -111,6 +118,17 @@ class Settings(BaseSettings):
     DB_USER: str = ""
     DB_PASSWORD: str = ""
     CONTEXT_WINDOW_SIZE: int = 20
+    MEMORY_GLOBAL_LIMIT: int = 4
+    MEMORY_PROJECT_LIMIT: int = 6
+    MEMORY_CONVERSATION_LIMIT: int = 6
+    MEMORY_AUTO_SUGGESTIONS_ENABLED: bool = True
+    MEMORY_CONVERSATION_AUTO_ACCEPT: bool = True
+    MEMORY_CONVERSATION_COMPACT_THRESHOLD: int = 0
+    MEMORY_CONVERSATION_COMPACT_MAX_CHARS: int = 3000
+    MEMORY_INLINE_CONFIDENCE_THRESHOLD: int = 85
+    MEMORY_INLINE_IMPORTANCE_THRESHOLD: int = 80
+    MEMORY_CANDIDATE_CONFIDENCE_THRESHOLD: int = 70
+    MEMORY_DOCUMENTS_AI_ENABLED: bool = False
     APP_TIMEZONE: str = "Asia/Shanghai"
 
     model_config = SettingsConfigDict(

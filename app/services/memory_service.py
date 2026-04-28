@@ -1,12 +1,13 @@
 import base64
 from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import get_model_label, settings
 from ..models import Attachment, Conversation, Memory, Message
 from .attachment_service import get_attachment_path
+from . import memory_document_service
 
 
 def store_message(
@@ -128,7 +129,12 @@ def get_chat_context_messages(
     project_id: str | None = None,
 ) -> list[dict[str, object]]:
     context: list[dict[str, object]] = []
-    long_term_context = get_long_term_memory_context(db, user_id, project_id=project_id)
+    long_term_context = get_long_term_memory_context(
+        db,
+        user_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
     if long_term_context:
         context.append(long_term_context)
     context.extend(get_context_messages(db, conversation_id, current_model=current_model))
@@ -147,8 +153,32 @@ def get_conversation_messages(db: Session, conversation_id: str) -> list[Message
 
 
 MEMORY_INTENT_MARKERS = ("以后你要记得", "以后回答我时", "请记住", "记住")
-MAX_MEMORY_CONTEXT_ITEMS = 12
 MAX_MEMORY_CONTENT_LENGTH = 500
+VALID_MEMORY_SCOPES = {"global", "project", "conversation"}
+VALID_MEMORY_STATUSES = {"active", "archived"}
+
+
+def validate_memory_scope(
+    scope: str,
+    project_id: str | None,
+    conversation_id: str | None,
+) -> None:
+    if scope not in VALID_MEMORY_SCOPES:
+        raise ValueError("Invalid memory scope")
+    if scope == "global" and (project_id is not None or conversation_id is not None):
+        raise ValueError("Global memories cannot set project_id or conversation_id")
+    if scope == "project" and (project_id is None or conversation_id is not None):
+        raise ValueError("Project memories require project_id and cannot set conversation_id")
+    if scope == "conversation" and conversation_id is None:
+        raise ValueError("Conversation memories require conversation_id")
+
+
+def validate_conversation_project(
+    project_id: str | None,
+    conversation_project_id: str | None,
+) -> None:
+    if project_id is not None and project_id != conversation_project_id:
+        raise ValueError("Conversation memory project_id must match conversation project_id")
 
 
 def has_explicit_memory_intent(content: str) -> bool:
@@ -174,31 +204,65 @@ def _normalize_memory_content(content: str) -> str:
     return normalized[:MAX_MEMORY_CONTENT_LENGTH]
 
 
-def maybe_store_explicit_memory(
-    db: Session,
-    user_id: str,
+def get_explicit_memory_values(
     message: Message,
     project_id: str | None = None,
-) -> Memory | None:
+    conversation_id: str | None = None,
+) -> dict[str, str | None] | None:
     if message.role != "user" or not has_explicit_memory_intent(message.content):
         return None
 
     content = _normalize_memory_content(message.content)
     if not content:
         return None
+
     kind = _classify_memory(content)
     scope = "global"
     memory_project_id = None
+    memory_conversation_id = None
+    effective_conversation_id = conversation_id or message.conversation_id
     if project_id is not None and kind in {"fact", "project", "tool"}:
         scope = "project"
         memory_project_id = project_id
+    elif kind != "preference":
+        if effective_conversation_id is None:
+            return None
+        scope = "conversation"
+        memory_conversation_id = effective_conversation_id
+
+    validate_memory_scope(scope, memory_project_id, memory_conversation_id)
+
+    return {
+        "content": content,
+        "kind": kind,
+        "scope": scope,
+        "project_id": memory_project_id,
+        "conversation_id": memory_conversation_id,
+    }
+
+
+def maybe_store_explicit_memory(
+    db: Session,
+    user_id: str,
+    message: Message,
+    project_id: str | None = None,
+    conversation_id: str | None = None,
+) -> Memory | None:
+    values = get_explicit_memory_values(
+        message,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+    if values is None:
+        return None
 
     memory = Memory(
         user_id=user_id,
-        content=content,
-        kind=kind,
-        scope=scope,
-        project_id=memory_project_id,
+        content=values["content"],
+        kind=values["kind"] or "fact",
+        scope=values["scope"] or "global",
+        project_id=values["project_id"],
+        conversation_id=values["conversation_id"],
         source_message_id=message.id,
     )
     db.add(memory)
@@ -211,60 +275,122 @@ def get_enabled_memories_for_context(
     db: Session,
     user_id: str,
     project_id: str | None = None,
-    limit: int = MAX_MEMORY_CONTEXT_ITEMS,
+    conversation_id: str | None = None,
 ) -> list[Memory]:
-    scope_filter = Memory.scope == "global"
-    if project_id is not None:
-        scope_filter = or_(
-            Memory.scope == "global",
-            (Memory.scope == "project") & (Memory.project_id == project_id),
+    def load_scope_memories(scope: str, limit: int, *filters) -> list[Memory]:
+        if limit <= 0:
+            return []
+        stmt = (
+            select(Memory)
+            .where(
+                Memory.user_id == user_id,
+                Memory.enabled.is_(True),
+                Memory.status == "active",
+                Memory.scope == scope,
+                *filters,
+            )
+            .order_by(Memory.last_used_at.desc().nullslast(), Memory.updated_at.desc())
+            .limit(limit)
         )
+        return list(db.execute(stmt).scalars().all())
 
-    stmt = (
-        select(Memory)
-        .where(
-            Memory.user_id == user_id,
-            Memory.enabled.is_(True),
-            Memory.status == "active",
-            scope_filter,
+    memories = load_scope_memories("global", settings.MEMORY_GLOBAL_LIMIT)
+    if project_id is not None:
+        memories.extend(
+            load_scope_memories(
+                "project",
+                settings.MEMORY_PROJECT_LIMIT,
+                Memory.project_id == project_id,
+            )
         )
-        .order_by(Memory.last_used_at.desc().nullslast(), Memory.updated_at.desc())
-        .limit(limit)
-    )
-    return list(db.execute(stmt).scalars().all())
+    if conversation_id is not None:
+        memories.extend(
+            load_scope_memories(
+                "conversation",
+                settings.MEMORY_CONVERSATION_LIMIT,
+                Memory.conversation_id == conversation_id,
+            )
+        )
+    return memories
 
 
 def get_long_term_memory_context(
     db: Session,
     user_id: str,
     project_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, str] | None:
-    memories = get_enabled_memories_for_context(db, user_id, project_id=project_id)
-    if not memories:
-        return None
+    documents_by_scope = {}
+    global_document = memory_document_service.get_memory_document(db, user_id, "global")
+    if global_document and global_document.content_md.strip() and not global_document.is_stale:
+        documents_by_scope["global"] = global_document
+    if project_id is not None:
+        project_document = memory_document_service.get_memory_document(
+            db,
+            user_id,
+            "project",
+            project_id=project_id,
+        )
+        if project_document and project_document.content_md.strip() and not project_document.is_stale:
+            documents_by_scope["project"] = project_document
+    if conversation_id is not None:
+        conversation_document = memory_document_service.get_memory_document(
+            db,
+            user_id,
+            "conversation",
+            conversation_id=conversation_id,
+        )
+        if (
+            conversation_document
+            and conversation_document.content_md.strip()
+            and not conversation_document.is_stale
+        ):
+            documents_by_scope["conversation"] = conversation_document
 
-    global_memories = [memory for memory in memories if memory.scope == "global"]
-    project_memories = [memory for memory in memories if memory.scope == "project"]
-    if project_id is None:
-        lines = "\n".join(f"- {memory.content}" for memory in global_memories)
-        return {
-            "role": "system",
-            "content": f"以下是关于当前用户的长期记忆。仅在与当前问题相关时使用：\n{lines}",
-        }
+    memories = get_enabled_memories_for_context(
+        db,
+        user_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+
+    global_memories = [
+        memory for memory in memories if memory.scope == "global" and "global" not in documents_by_scope
+    ]
+    project_memories = [
+        memory for memory in memories if memory.scope == "project" and "project" not in documents_by_scope
+    ]
+    conversation_memories = [
+        memory
+        for memory in memories
+        if memory.scope == "conversation" and "conversation" not in documents_by_scope
+    ]
 
     sections: list[str] = []
-    if global_memories:
+    if "global" in documents_by_scope:
+        sections.append(f"全局记忆文档：\n{documents_by_scope['global'].content_md}")
+    elif global_memories:
         global_lines = "\n".join(f"- {memory.content}" for memory in global_memories)
         sections.append(f"全局长期记忆：\n{global_lines}")
-    if project_memories:
+    if "project" in documents_by_scope:
+        sections.append(f"当前项目记忆文档：\n{documents_by_scope['project'].content_md}")
+    elif project_memories:
         project_lines = "\n".join(f"- {memory.content}" for memory in project_memories)
         sections.append(f"当前项目长期记忆：\n{project_lines}")
+    if "conversation" in documents_by_scope:
+        sections.append(f"当前会话记忆文档：\n{documents_by_scope['conversation'].content_md}")
+    elif conversation_memories:
+        conversation_lines = "\n".join(f"- {memory.content}" for memory in conversation_memories)
+        sections.append(f"当前会话记忆：\n{conversation_lines}")
+
+    if not sections:
+        return None
 
     return {
         "role": "system",
         "content": (
             "以下是关于当前用户的长期记忆。仅在与当前问题相关时使用。"
-            "项目记忆与全局记忆冲突时，优先遵循当前项目长期记忆。\n"
+            "如果会话记忆、项目记忆和全局记忆冲突，优先遵循当前会话记忆，其次当前项目记忆，最后全局记忆。\n"
             + "\n\n".join(sections)
         ),
     }

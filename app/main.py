@@ -4,7 +4,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_db
-from .routers import attachments, auth, chat, conversations, memories, projects
+from .routers import (
+    attachments,
+    auth,
+    chat,
+    conversations,
+    memories,
+    memory_candidates,
+    memory_documents,
+    projects,
+)
 
 
 @asynccontextmanager
@@ -35,6 +44,8 @@ app.include_router(conversations.router)
 app.include_router(attachments.router)
 app.include_router(auth.router)
 app.include_router(memories.router)
+app.include_router(memory_candidates.router)
+app.include_router(memory_documents.router)
 app.include_router(projects.router)
 
 

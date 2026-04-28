@@ -50,6 +50,19 @@ class MemoryRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
 
+    def _create_conversation(
+        self,
+        headers: dict[str, str],
+        title: str = "Memory Conversation",
+        project_id: str | None = None,
+    ) -> str:
+        payload = {"title": title}
+        if project_id is not None:
+            payload["project_id"] = project_id
+        response = self.client.post("/api/conversations", json=payload, headers=headers)
+        self.assertEqual(response.status_code, 201)
+        return response.json()["id"]
+
     def test_memory_crud(self) -> None:
         headers = self._register("owner@example.com")
 
@@ -221,9 +234,11 @@ class MemoryRoutesTests(unittest.TestCase):
         global_memory = global_response.json()
         self.assertEqual(global_memory["scope"], "global")
         self.assertIsNone(global_memory["project_id"])
+        self.assertIsNone(global_memory["conversation_id"])
         self.assertEqual(global_memory["status"], "active")
         self.assertEqual(global_memory["importance"], 0)
         self.assertIsNone(global_memory["superseded_by_id"])
+        self.assertIsNone(global_memory["source_candidate_id"])
         self.assertIsNone(global_memory["archived_at"])
         self.assertTrue(global_memory["enabled"])
 
@@ -242,6 +257,8 @@ class MemoryRoutesTests(unittest.TestCase):
         project_memory = project_response.json()
         self.assertEqual(project_memory["scope"], "project")
         self.assertEqual(project_memory["project_id"], project_id)
+        self.assertIsNone(project_memory["conversation_id"])
+        self.assertIsNone(project_memory["source_candidate_id"])
         self.assertEqual(project_memory["importance"], 4)
 
         project_list = self.client.get(
@@ -275,7 +292,10 @@ class MemoryRoutesTests(unittest.TestCase):
             headers=alice_headers,
         )
         self.assertEqual(global_with_project.status_code, 400)
-        self.assertEqual(global_with_project.json()["detail"], "Global memories cannot set project_id")
+        self.assertEqual(
+            global_with_project.json()["detail"],
+            "Global memories cannot set project_id or conversation_id",
+        )
 
         project_without_project_id = self.client.post(
             "/api/memories",
@@ -285,7 +305,7 @@ class MemoryRoutesTests(unittest.TestCase):
         self.assertEqual(project_without_project_id.status_code, 400)
         self.assertEqual(
             project_without_project_id.json()["detail"],
-            "Project memories require project_id",
+            "Project memories require project_id and cannot set conversation_id",
         )
 
         bob_project_memory = self.client.post(
@@ -305,6 +325,176 @@ class MemoryRoutesTests(unittest.TestCase):
             headers=bob_headers,
         )
         self.assertEqual(bob_project_filter.status_code, 404)
+
+    def test_conversation_memory_create_and_query(self) -> None:
+        headers = self._register("conversation-memory@example.com")
+        conversation_id = self._create_conversation(headers)
+        other_conversation_id = self._create_conversation(headers, "Other")
+
+        create_response = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Conversation fact",
+                "kind": "fact",
+                "scope": "conversation",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        self.assertEqual(create_response.status_code, 201)
+        created = create_response.json()
+        self.assertEqual(created["scope"], "conversation")
+        self.assertEqual(created["conversation_id"], conversation_id)
+        self.assertIsNone(created["project_id"])
+
+        matching_list = self.client.get(
+            f"/api/memories?scope=conversation&conversation_id={conversation_id}",
+            headers=headers,
+        )
+        self.assertEqual(matching_list.status_code, 200)
+        self.assertEqual([item["id"] for item in matching_list.json()], [created["id"]])
+
+        other_list = self.client.get(
+            f"/api/memories?scope=conversation&conversation_id={other_conversation_id}",
+            headers=headers,
+        )
+        self.assertEqual(other_list.status_code, 200)
+        self.assertEqual(other_list.json(), [])
+
+    def test_memory_scope_rejects_invalid_conversation_combinations(self) -> None:
+        headers = self._register("invalid-conversation-scope@example.com")
+        project_id = self._create_project(headers)
+        other_project_id = self._create_project(headers, "Other Project")
+        conversation_id = self._create_conversation(headers, project_id=project_id)
+
+        global_with_conversation = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Bad global memory",
+                "kind": "fact",
+                "scope": "global",
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        self.assertEqual(global_with_conversation.status_code, 400)
+        self.assertEqual(
+            global_with_conversation.json()["detail"],
+            "Global memories cannot set project_id or conversation_id",
+        )
+
+        project_with_conversation = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Bad project memory",
+                "kind": "fact",
+                "scope": "project",
+                "project_id": project_id,
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        self.assertEqual(project_with_conversation.status_code, 400)
+        self.assertEqual(
+            project_with_conversation.json()["detail"],
+            "Project memories require project_id and cannot set conversation_id",
+        )
+
+        conversation_with_other_project = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Bad conversation memory",
+                "kind": "fact",
+                "scope": "conversation",
+                "project_id": other_project_id,
+                "conversation_id": conversation_id,
+            },
+            headers=headers,
+        )
+        self.assertEqual(conversation_with_other_project.status_code, 400)
+        self.assertEqual(
+            conversation_with_other_project.json()["detail"],
+            "Conversation memory project_id must match conversation project_id",
+        )
+
+        mismatched_filter = self.client.get(
+            f"/api/memories?project_id={other_project_id}&conversation_id={conversation_id}",
+            headers=headers,
+        )
+        self.assertEqual(mismatched_filter.status_code, 400)
+        self.assertEqual(
+            mismatched_filter.json()["detail"],
+            "Conversation memory project_id must match conversation project_id",
+        )
+
+    def test_conversation_memory_requires_conversation_owner(self) -> None:
+        alice_headers = self._register("alice-conversation-owner@example.com")
+        bob_headers = self._register("bob-conversation-owner@example.com")
+        alice_conversation_id = self._create_conversation(alice_headers, "Alice")
+
+        create_response = self.client.post(
+            "/api/memories",
+            json={
+                "content": "Wrong owner conversation",
+                "kind": "fact",
+                "scope": "conversation",
+                "conversation_id": alice_conversation_id,
+            },
+            headers=bob_headers,
+        )
+        self.assertEqual(create_response.status_code, 404)
+
+        query_response = self.client.get(
+            f"/api/memories?scope=conversation&conversation_id={alice_conversation_id}",
+            headers=bob_headers,
+        )
+        self.assertEqual(query_response.status_code, 404)
+
+    def test_memory_update_accepts_conversation_id_only_change(self) -> None:
+        headers = self._register("update-conversation-memory@example.com")
+        conversation_id = self._create_conversation(headers)
+        create_response = self.client.post(
+            "/api/memories",
+            json={"content": "Memory to move", "kind": "fact"},
+            headers=headers,
+        )
+        self.assertEqual(create_response.status_code, 201)
+
+        update_response = self.client.put(
+            f"/api/memories/{create_response.json()['id']}",
+            json={"scope": "conversation", "conversation_id": conversation_id},
+            headers=headers,
+        )
+        self.assertEqual(update_response.status_code, 200)
+        updated = update_response.json()
+        self.assertEqual(updated["scope"], "conversation")
+        self.assertEqual(updated["conversation_id"], conversation_id)
+
+    def test_memory_update_rejects_null_enabled_and_importance(self) -> None:
+        headers = self._register("null-update-memory@example.com")
+        create_response = self.client.post(
+            "/api/memories",
+            json={"content": "Memory to update", "kind": "fact"},
+            headers=headers,
+        )
+        self.assertEqual(create_response.status_code, 201)
+        memory_id = create_response.json()["id"]
+
+        null_enabled = self.client.put(
+            f"/api/memories/{memory_id}",
+            json={"enabled": None},
+            headers=headers,
+        )
+        self.assertEqual(null_enabled.status_code, 400)
+        self.assertEqual(null_enabled.json()["detail"], "Memory enabled cannot be null")
+
+        null_importance = self.client.put(
+            f"/api/memories/{memory_id}",
+            json={"importance": None},
+            headers=headers,
+        )
+        self.assertEqual(null_importance.status_code, 400)
+        self.assertEqual(null_importance.json()["detail"], "Memory importance cannot be null")
 
     def test_memory_status_archiving_filter_and_enabled_toggle(self) -> None:
         headers = self._register("archive-memory@example.com")

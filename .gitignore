@@ -17,4 +17,7 @@ logs/
 *.log
 
 .idea/
+/tests/
+/uploads/
 CLAUDE.md
+/docs/

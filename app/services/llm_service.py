@@ -164,3 +164,32 @@ async def stream_chat_completion(
         delta = chunk.choices[0].delta
         if delta.content:
             yield delta.content
+
+
+async def create_chat_completion(
+    messages: list[dict[str, object]],
+    model: str | None = None,
+    system_prompt: str | None = None,
+    max_tokens: int = 800,
+) -> str:
+    chosen_model = model or settings.OPENAI_MODEL
+    normalized_reasoning = _normalize_reasoning_level(chosen_model, "off", None)
+    extra_body, model_max_tokens = _build_model_controls(chosen_model, normalized_reasoning)
+    requested_max_tokens = max(1, min(max_tokens, model_max_tokens))
+
+    full_messages = [
+        {
+            "role": "system",
+            "content": system_prompt or _build_system_prompt(chosen_model),
+        }
+    ]
+    full_messages.extend(messages)
+
+    response = await _client.chat.completions.create(
+        model=chosen_model,
+        messages=full_messages,
+        stream=False,
+        max_tokens=requested_max_tokens,
+        extra_body=extra_body or None,
+    )
+    return response.choices[0].message.content or ""

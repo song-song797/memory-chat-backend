@@ -3,6 +3,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_serializer
 
+MemoryScope = Literal["global", "project", "conversation"]
+MemoryStatus = Literal["active", "archived"]
+CandidateStatus = Literal["pending", "accepted", "dismissed"]
+CandidateSurface = Literal["inline", "settings"]
+CandidateAction = Literal["create", "update", "archive", "none"]
+
 
 def _serialize_datetime(value: datetime) -> str:
     if value.tzinfo is None:
@@ -155,6 +161,7 @@ class MemoryCreate(BaseModel):
     kind: str = Field(default="fact", max_length=40)
     scope: str = Field(default="global", max_length=20)
     project_id: str | None = None
+    conversation_id: str | None = None
     status: str = Field(default="active", max_length=20)
     importance: int = 0
     superseded_by_id: str | None = None
@@ -166,6 +173,7 @@ class MemoryUpdate(BaseModel):
     enabled: bool | None = None
     scope: str | None = Field(default=None, max_length=20)
     project_id: str | None = None
+    conversation_id: str | None = None
     status: str | None = Field(default=None, max_length=20)
     importance: int | None = None
     superseded_by_id: str | None = None
@@ -178,9 +186,11 @@ class MemoryOut(BaseModel):
     enabled: bool
     scope: str
     project_id: str | None = None
+    conversation_id: str | None = None
     status: str
     importance: int
     superseded_by_id: str | None = None
+    source_candidate_id: str | None = None
     created_at: datetime
     updated_at: datetime
     last_used_at: datetime | None = None
@@ -190,6 +200,82 @@ class MemoryOut(BaseModel):
 
     @field_serializer("created_at", "updated_at", "last_used_at", "archived_at")
     def serialize_memory_datetimes(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return _serialize_datetime(value)
+
+
+class MemoryCandidateOut(BaseModel):
+    id: str
+    project_id: str | None = None
+    conversation_id: str | None = None
+    target_memory_id: str | None = None
+    accepted_memory_id: str | None = None
+    source_message_id: str | None = None
+    scope: str
+    action: str
+    content: str
+    kind: str
+    confidence: int
+    importance: int
+    reason: str | None = None
+    status: str
+    surface: str
+    extraction_model: str | None = None
+    presented_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer(
+        "presented_at",
+        "reviewed_at",
+        "created_at",
+        "updated_at",
+    )
+    def serialize_candidate_datetimes(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return _serialize_datetime(value)
+
+
+class MemoryCandidateAccept(BaseModel):
+    content: str | None = Field(default=None, max_length=1000)
+    kind: str | None = Field(default=None, max_length=40)
+    scope: MemoryScope | None = None
+    project_id: str | None = None
+    conversation_id: str | None = None
+    importance: int | None = None
+
+
+class MemoryCandidateReviewOut(BaseModel):
+    candidate: MemoryCandidateOut
+    memory: MemoryOut | None = None
+    archived_memory_id: str | None = None
+
+
+class MemoryDocumentOut(BaseModel):
+    id: str
+    project_id: str | None = None
+    conversation_id: str | None = None
+    scope: str
+    content_md: str
+    source_memory_ids: str
+    revision: int
+    is_stale: bool
+    generated_by: str
+    generation_model: str | None = None
+    generation_error: str | None = None
+    generated_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_serializer("generated_at", "created_at", "updated_at")
+    def serialize_document_datetimes(self, value: datetime | None) -> str | None:
         if value is None:
             return None
         return _serialize_datetime(value)
