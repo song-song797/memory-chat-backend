@@ -161,9 +161,14 @@ async def stream_chat_completion(
     )
 
     async for chunk in stream:
-        delta = chunk.choices[0].delta
-        if delta.content:
-            yield delta.content
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+
+        delta = getattr(choices[0], "delta", None)
+        content = getattr(delta, "content", None)
+        if content:
+            yield content
 
 
 async def create_chat_completion(
@@ -192,4 +197,9 @@ async def create_chat_completion(
         max_tokens=requested_max_tokens,
         extra_body=extra_body or None,
     )
-    return response.choices[0].message.content or ""
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+
+    message = getattr(choices[0], "message", None)
+    return getattr(message, "content", None) or ""
