@@ -131,6 +131,18 @@ class Settings(BaseSettings):
     MEMORY_DOCUMENTS_AI_ENABLED: bool = False
     APP_TIMEZONE: str = "Asia/Shanghai"
 
+    # Embedding (Xinference / OpenAI-compatible)
+    EMBEDDING_BASE_URL: str = ""
+    EMBEDDING_API_KEY: str = "unused"
+    EMBEDDING_MODEL: str = ""
+    EMBEDDING_DIMENSIONS: int = 1024
+
+    # Semantic retrieval thresholds
+    EMBEDDING_SIMILARITY_THRESHOLD: float = 0.4
+    EMBEDDING_MAX_PER_SCOPE: int = 10
+    RAG_SIMILARITY_THRESHOLD: float = 0.5
+    RAG_MAX_RESULTS: int = 5
+
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",

@@ -130,14 +130,7 @@ def resolve_candidate_scope(
 
 
 def choose_candidate_surface(candidate: ExtractedMemoryCandidate) -> str:
-    if candidate.action in {"update", "archive"}:
-        return "inline"
-    if (
-        candidate.confidence >= settings.MEMORY_INLINE_CONFIDENCE_THRESHOLD
-        and candidate.importance >= settings.MEMORY_INLINE_IMPORTANCE_THRESHOLD
-    ):
-        return "inline"
-    return "settings"
+    return "inline"
 
 
 def _memory_value(memory: Any, key: str) -> Any:

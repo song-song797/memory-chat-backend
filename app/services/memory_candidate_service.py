@@ -1,9 +1,11 @@
+import json
 import re
 
 from sqlalchemy import select
 
+from ..config import get_memory_model
 from ..models import Conversation, Memory, MemoryCandidate, Project, _utcnow
-from . import memory_service
+from . import embedding_service, llm_service, memory_service
 
 
 VALID_CANDIDATE_ACTIONS = {"create", "update", "archive", "none"}
@@ -70,13 +72,139 @@ def find_existing_memory_match(
         )
         .order_by(Memory.updated_at.desc(), Memory.created_at.desc())
     )
-    for memory in db.execute(stmt).scalars().all():
+    memories = list(db.execute(stmt).scalars().all())
+
+    # Fast path: exact text matching
+    for memory in memories:
         memory_exact_key = f"{memory.kind}:{_normalize_memory_text(memory.content)}"
         if memory_exact_key == candidate_exact_key:
             return "duplicate", memory
         if _memory_identity_key(memory.content, memory.kind) == candidate_identity_key:
             return "update", memory
-    return "create", None
+
+    return "create", None, memories
+
+
+def _extract_json_text(payload: str) -> str:
+    text = payload.strip()
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
+
+
+async def _llm_semantic_match(
+    candidate_content: str,
+    candidate_kind: str,
+    existing_memories: list[Memory],
+) -> tuple[str, Memory | None]:
+    """Use LLM to determine if candidate is a semantic duplicate/update of existing memories."""
+    if not existing_memories:
+        return "create", None
+
+    memories_text = "\n".join(
+        f"- id: {m.id} / kind: {m.kind} / content: {m.content}"
+        for m in existing_memories
+    )
+
+    system_prompt = (
+        "你是记忆去重判断器。判断候选记忆与已有记忆列表的语义关系。\n"
+        "只返回一个 JSON 对象，不要返回其他内容。\n"
+        "字段：relation（duplicate/update/create）、target_id。\n"
+        "duplicate：候选记忆与某条已有记忆表达完全相同的信息，只是措辞不同。\n"
+        "update：候选记忆是对某条已有记忆的更新、修正或否定（如偏好改变、技术栈更换）。\n"
+        "create：候选记忆与已有记忆无关，是新信息。\n"
+        "如果是 duplicate 或 update，target_id 设置为对应已有记忆的 id。\n"
+        "如果是 create，target_id 设置为 null。\n"
+        "注意区分：'我喜欢X'和'我不喜欢X'是 update 关系，不是 duplicate。"
+    )
+    user_prompt = (
+        f"候选记忆：kind={candidate_kind} / content={candidate_content}\n\n"
+        f"已有记忆列表：\n{memories_text}"
+    )
+
+    try:
+        response = await llm_service.create_chat_completion(
+            messages=[{"role": "user", "content": user_prompt}],
+            model=get_memory_model(),
+            system_prompt=system_prompt,
+            max_tokens=200,
+        )
+        data = json.loads(_extract_json_text(response))
+        relation = data.get("relation", "create")
+        target_id = data.get("target_id")
+
+        if relation in ("duplicate", "update") and target_id:
+            target = next((m for m in existing_memories if m.id == target_id), None)
+            if target:
+                return relation, target
+
+        return "create", None
+    except Exception:
+        return "create", None
+
+
+SIMILARITY_TOP_K = 10
+
+
+async def _embedding_prefilter(
+    candidate_content: str,
+    existing_memories: list[Memory],
+    db,
+) -> list[Memory]:
+    """Use embedding similarity to narrow down candidates before LLM."""
+    candidate_embedding = await embedding_service.compute_embedding(candidate_content)
+    if not candidate_embedding:
+        # Embedding unavailable, fall through to LLM with all memories
+        return existing_memories
+
+    # Lazy backfill: compute embeddings for memories that don't have one
+    missing = [m for m in existing_memories if not m.embedding]
+    if missing:
+        texts = [m.content for m in missing]
+        embeddings = await embedding_service.compute_embeddings(texts)
+        for memory, embedding in zip(missing, embeddings):
+            if embedding:
+                memory.embedding = embedding_service.serialize(embedding)
+        db.flush()
+
+    # Score and rank by similarity
+    scored: list[tuple[float, Memory]] = []
+    for memory in existing_memories:
+        mem_embedding = embedding_service.deserialize(memory.embedding)
+        if not mem_embedding:
+            continue
+        score = embedding_service.cosine_similarity(candidate_embedding, mem_embedding)
+        scored.append((score, memory))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [m for _, m in scored[:SIMILARITY_TOP_K]]
+
+
+async def find_semantic_memory_match(
+    db,
+    user_id: str,
+    scope: str,
+    project_id: str | None,
+    conversation_id: str | None,
+    content: str,
+    kind: str,
+) -> tuple[str, Memory | None]:
+    """Text-based fast path → embedding pre-filter → LLM semantic match."""
+    text_result, memory, existing_memories = find_existing_memory_match(
+        db, user_id, scope, project_id, conversation_id, content, kind,
+    )
+
+    # Fast path found a match
+    if text_result != "create":
+        return text_result, memory
+
+    if not existing_memories:
+        return "create", None
+
+    # Embedding pre-filter → LLM precise match
+    top_k = await _embedding_prefilter(content, existing_memories, db)
+    return await _llm_semantic_match(content, kind, top_k)
 
 
 def create_memory_candidate(

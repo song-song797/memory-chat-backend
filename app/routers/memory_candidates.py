@@ -145,6 +145,6 @@ def defer_memory_candidate(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        return memory_candidate_service.defer_memory_candidate(db, current_user.id, candidate_id)
+        return memory_candidate_service.dismiss_memory_candidate(db, current_user.id, candidate_id)
     except ValueError as error:
         _raise_candidate_error(error)

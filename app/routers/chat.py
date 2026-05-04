@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -14,10 +15,11 @@ from ..config import (
     settings,
 )
 from ..database import SessionLocal, get_db
-from ..models import Conversation, User
+from ..models import Conversation, MemoryCandidate, User
 from ..schemas import ChatRequest, LandingChatRequest, ModelCatalog
 from ..services import (
     conversation_memory_service,
+    conversation_rag_service,
     llm_service,
     memory_candidate_service,
     memory_document_service,
@@ -140,7 +142,7 @@ async def _extract_and_store_memory_candidate(
 
     db = SessionLocal()
     try:
-        existing_memories = memory_service.get_enabled_memories_for_context(
+        existing_memories = await memory_service.get_enabled_memories_for_context(
             db,
             user_id,
             project_id=project_id,
@@ -252,6 +254,20 @@ async def chat(
         db.commit()
         db.refresh(conv)
 
+    # Auto-dismiss stale inline candidates from previous turn
+    from sqlalchemy import update as sa_update
+    db.execute(
+        sa_update(MemoryCandidate)
+        .where(
+            MemoryCandidate.user_id == current_user.id,
+            MemoryCandidate.status == "pending",
+            MemoryCandidate.surface == "inline",
+            MemoryCandidate.conversation_id == conv.id,
+        )
+        .values(status="dismissed", reviewed_at=datetime.now(timezone.utc))
+    )
+    db.flush()
+
     chosen_model = req.model or get_default_model()
     if chosen_model not in get_supported_model_ids():
         raise HTTPException(status_code=400, detail=f"Model `{chosen_model}` is not supported")
@@ -292,7 +308,7 @@ async def chat(
             conversation_id = explicit_memory_values["conversation_id"]
             content = explicit_memory_values["content"] or ""
             kind = explicit_memory_values["kind"] or "fact"
-            match_action, target_memory = memory_candidate_service.find_existing_memory_match(
+            match_action, target_memory = await memory_candidate_service.find_semantic_memory_match(
                 db,
                 user_id=current_user.id,
                 scope=scope,
@@ -386,12 +402,13 @@ async def chat(
         print(f"Failed to create explicit memory candidate: {error}")
 
     try:
-        context = memory_service.get_chat_context_messages(
+        context = await memory_service.get_chat_context_messages(
             db,
             current_user.id,
             conv.id,
             current_model=chosen_model,
             project_id=conv.project_id,
+            current_message=req.message.strip(),
         )
     except Exception as error:
         db.rollback()
@@ -449,6 +466,18 @@ async def chat(
                             source_message_id=user_message_id,
                             user_content=user_content,
                             model=chosen_model,
+                        )
+                    )
+                # Save turn embedding for conversation RAG
+                if user_content.strip() and assistant_content.strip():
+                    turn_content = f"用户：{user_content}\n助手：{assistant_content}"
+                    asyncio.create_task(
+                        conversation_rag_service.save_turn_embedding(
+                            user_id=user_id,
+                            conversation_id=conv_id,
+                            turn_start_id=user_message_id,
+                            turn_end_id=None,
+                            content=turn_content,
                         )
                     )
 

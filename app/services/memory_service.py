@@ -5,9 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import get_model_label, settings
-from ..models import Attachment, Conversation, Memory, Message
+from ..models import Attachment, Conversation, Memory, Message, MessageEmbedding
 from .attachment_service import get_attachment_path
-from . import memory_document_service
+from . import conversation_rag_service, embedding_service, memory_document_service
 
 
 def store_message(
@@ -121,19 +121,21 @@ def get_context_messages(
     return [_format_context_message(message, current_model) for message in messages]
 
 
-def get_chat_context_messages(
+async def get_chat_context_messages(
     db: Session,
     user_id: str,
     conversation_id: str,
     current_model: str | None = None,
     project_id: str | None = None,
+    current_message: str | None = None,
 ) -> list[dict[str, object]]:
     context: list[dict[str, object]] = []
-    long_term_context = get_long_term_memory_context(
+    long_term_context = await get_long_term_memory_context(
         db,
         user_id,
         project_id=project_id,
         conversation_id=conversation_id,
+        current_message=current_message,
     )
     if long_term_context:
         context.append(long_term_context)
@@ -271,12 +273,14 @@ def maybe_store_explicit_memory(
     return memory
 
 
-def get_enabled_memories_for_context(
+async def get_enabled_memories_for_context(
     db: Session,
     user_id: str,
     project_id: str | None = None,
     conversation_id: str | None = None,
+    current_message: str | None = None,
 ) -> list[Memory]:
+
     def load_scope_memories(scope: str, limit: int, *filters) -> list[Memory]:
         if limit <= 0:
             return []
@@ -289,36 +293,88 @@ def get_enabled_memories_for_context(
                 Memory.scope == scope,
                 *filters,
             )
-            .order_by(Memory.last_used_at.desc().nullslast(), Memory.updated_at.desc())
-            .limit(limit)
+            .order_by(Memory.updated_at.desc(), Memory.created_at.desc())
         )
         return list(db.execute(stmt).scalars().all())
 
+    # If embedding available and message provided, use semantic ranking
+    if current_message and embedding_service.is_available():
+        # Load a larger buffer for ranking
+        raw_limit = settings.EMBEDDING_MAX_PER_SCOPE + 10
+
+        raw_memories = load_scope_memories("global", raw_limit)
+        if project_id is not None:
+            raw_memories.extend(
+                load_scope_memories("project", raw_limit, Memory.project_id == project_id)
+            )
+        if conversation_id is not None:
+            raw_memories.extend(
+                load_scope_memories("conversation", raw_limit, Memory.conversation_id == conversation_id)
+            )
+
+        if not raw_memories:
+            return []
+
+        candidate_embedding = await embedding_service.compute_embedding(current_message)
+        if candidate_embedding:
+            # Lazy backfill: compute embeddings for memories missing one
+            missing = [m for m in raw_memories if not m.embedding]
+            if missing:
+                texts = [m.content for m in missing]
+                embeddings = await embedding_service.compute_embeddings(texts)
+                for memory, embedding in zip(missing, embeddings):
+                    if embedding:
+                        memory.embedding = embedding_service.serialize(embedding)
+                db.flush()
+
+            # Score all memories by similarity
+            scored: list[tuple[float, Memory]] = []
+            for memory in raw_memories:
+                mem_embedding = embedding_service.deserialize(memory.embedding)
+                if mem_embedding:
+                    score = embedding_service.cosine_similarity(candidate_embedding, mem_embedding)
+                    scored.append((score, memory))
+
+            # Filter by threshold
+            threshold = settings.EMBEDDING_SIMILARITY_THRESHOLD
+            filtered = [(score, m) for score, m in scored if score >= threshold]
+            filtered.sort(key=lambda x: x[0], reverse=True)
+
+            # Apply per-scope limits
+            scope_limits = {
+                "global": settings.MEMORY_GLOBAL_LIMIT,
+                "project": settings.MEMORY_PROJECT_LIMIT,
+                "conversation": settings.MEMORY_CONVERSATION_LIMIT,
+            }
+            final: list[Memory] = []
+            counts: dict[str, int] = {}
+            for _, memory in filtered:
+                scope = memory.scope
+                limit = scope_limits.get(scope, 10)
+                if counts.get(scope, 0) < limit:
+                    final.append(memory)
+                    counts[scope] = counts.get(scope, 0) + 1
+            return final
+
+    # Fallback: time-based ordering with original limits
     memories = load_scope_memories("global", settings.MEMORY_GLOBAL_LIMIT)
     if project_id is not None:
         memories.extend(
-            load_scope_memories(
-                "project",
-                settings.MEMORY_PROJECT_LIMIT,
-                Memory.project_id == project_id,
-            )
+            load_scope_memories("project", settings.MEMORY_PROJECT_LIMIT, Memory.project_id == project_id)
         )
     if conversation_id is not None:
         memories.extend(
-            load_scope_memories(
-                "conversation",
-                settings.MEMORY_CONVERSATION_LIMIT,
-                Memory.conversation_id == conversation_id,
-            )
+            load_scope_memories("conversation", settings.MEMORY_CONVERSATION_LIMIT, Memory.conversation_id == conversation_id)
         )
     return memories
 
 
-def get_long_term_memory_context(
+async def get_long_term_memory_context(
     db: Session,
     user_id: str,
     project_id: str | None = None,
     conversation_id: str | None = None,
+    current_message: str | None = None,
 ) -> dict[str, str] | None:
     documents_by_scope = {}
     global_document = memory_document_service.get_memory_document(db, user_id, "global")
@@ -347,11 +403,12 @@ def get_long_term_memory_context(
         ):
             documents_by_scope["conversation"] = conversation_document
 
-    memories = get_enabled_memories_for_context(
+    memories = await get_enabled_memories_for_context(
         db,
         user_id,
         project_id=project_id,
         conversation_id=conversation_id,
+        current_message=current_message,
     )
 
     global_memories = [
@@ -382,6 +439,18 @@ def get_long_term_memory_context(
     elif conversation_memories:
         conversation_lines = "\n".join(f"- {memory.content}" for memory in conversation_memories)
         sections.append(f"当前会话记忆：\n{conversation_lines}")
+
+    # RAG: search relevant conversation history
+    if current_message:
+        try:
+            rag_turns = await conversation_rag_service.search_relevant_turns(
+                db, user_id=user_id, query=current_message,
+            )
+            rag_context = conversation_rag_service.format_rag_context(rag_turns)
+            if rag_context:
+                sections.append(rag_context)
+        except Exception as error:
+            print(f"Failed to load RAG context: {error}")
 
     if not sections:
         return None

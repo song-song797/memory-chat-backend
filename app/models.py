@@ -48,6 +48,11 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="MemoryDocument.updated_at.desc()",
     )
+    message_embeddings: Mapped[list["MessageEmbedding"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="MessageEmbedding.created_at.desc()",
+    )
     projects: Mapped[list["Project"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -158,6 +163,7 @@ class Memory(Base):
         String(32), ForeignKey("memory_candidates.id", ondelete="SET NULL"), nullable=True
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -253,6 +259,32 @@ class MemoryDocument(Base):
     user: Mapped["User"] = relationship(back_populates="memory_documents")
     project: Mapped["Project | None"] = relationship()
     conversation: Mapped["Conversation | None"] = relationship()
+
+
+class MessageEmbedding(Base):
+    __tablename__ = "message_embeddings"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
+    turn_start_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    turn_end_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped["User"] = relationship(back_populates="message_embeddings")
+    conversation: Mapped["Conversation"] = relationship()
+    turn_start: Mapped["Message | None"] = relationship(foreign_keys=[turn_start_id])
+    turn_end: Mapped["Message | None"] = relationship(foreign_keys=[turn_end_id])
 
 
 class Attachment(Base):
