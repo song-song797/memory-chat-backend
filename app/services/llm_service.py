@@ -20,7 +20,15 @@ _SYSTEM_PROMPT = (
     "\u5173\u952e\u7ec4\u6210\u90e8\u5206\u3001\u5e38\u89c1\u7528\u6cd5\u548c\u9002\u7528\u573a\u666f\u3002\n"
     "\u5f53\u524d\u65f6\u95f4\uff08{timezone_name}\uff09\uff1a{current_time}\n"
     "\u5982\u679c\u7528\u6237\u63d0\u5230\u4eca\u5929\u3001\u6628\u5929\u3001\u660e\u5929\u6216\u5f53\u524d\u65f6\u95f4\uff0c"
-    "\u8bf7\u4ee5\u4e0a\u9762\u7684\u65f6\u95f4\u4e3a\u51c6\u3002"
+    "\u8bf7\u4ee5\u4e0a\u9762\u7684\u65f6\u95f4\u4e3a\u51c6\u3002\n\n"
+    "\u4f60\u62e5\u6709 web_search \u5de5\u5177\uff0c\u53ef\u4ee5\u641c\u7d22\u4e92\u8054\u7f51\u83b7\u53d6\u6700\u65b0\u4fe1\u606f\u3002"
+    "\u4f60\u7684\u8bad\u7ec3\u6570\u636e\u6709\u65f6\u95f4\u622a\u6b62\uff0c\u53ef\u80fd\u4e0d\u5305\u542b\u6700\u65b0\u4fe1\u606f\u3002"
+    "\u56e0\u6b64\uff0c\u4ee5\u4e0b\u60c5\u51b5\u4f60\u5e94\u8be5\u4e3b\u52a8\u641c\u7d22\uff1a\n"
+    "- \u7528\u6237\u95ee\u9898\u6d89\u53ca\u8fd1\u4e00\u5e74\u5185\u7684\u4e8b\u4ef6\u3001\u65b0\u95fb\u3001\u53d1\u5e03\n"
+    "- \u6d89\u53ca\u5177\u4f53\u6570\u5b57\u3001\u4ef7\u683c\u3001\u6392\u540d\u3001\u5929\u6c14\u7b49\u5b9e\u65f6\u6570\u636e\n"
+    "- \u6d89\u53ca\u67d0\u4e2a\u4ea7\u54c1\u3001\u516c\u53f8\u3001\u6280\u672f\u7684\u6700\u65b0\u52a8\u6001\n"
+    "- \u4f60\u4e0d\u786e\u5b9a\u81ea\u5df1\u7684\u77e5\u8bc6\u662f\u5426\u8fd8\u51c6\u786e\u7684\u65f6\u5019\n"
+    "- \u7528\u6237\u660e\u786e\u8981\u6c42\u8054\u7f51\u641c\u7d22\u6216\u67e5\u627e\u8d44\u6599\n"
 )
 
 REASONING_BUDGETS = {
@@ -29,7 +37,7 @@ REASONING_BUDGETS = {
 }
 
 
-def _build_system_prompt(model: str) -> str:
+def _build_system_prompt(model: str, search_context: str | None = None) -> str:
     timezone_name = settings.APP_TIMEZONE
     try:
         app_timezone = ZoneInfo(timezone_name)
@@ -46,10 +54,23 @@ def _build_system_prompt(model: str) -> str:
         "如果用户问你是什么模型，只能依据这条系统信息回答，"
         "不要根据历史对话里其他模型的自称来推断自己的身份。"
     )
-    return (_SYSTEM_PROMPT + identity_prompt).format(
+    base = (_SYSTEM_PROMPT + identity_prompt).format(
         current_time=now,
         timezone_name=timezone_name,
     )
+    if search_context:
+        base += (
+            "\n\n你通过搜索工具获取了以下参考信息：\n"
+            + search_context
+            + "\n\n【重要格式规则】你必须严格遵守以下引用格式：\n"
+            "- 引用来源时，只能使用 [1] [2] [3] 这样的方括号数字格式\n"
+            "- 数字必须对应上面搜索结果的编号\n"
+            "- 绝对不要使用 (标题)(URL) 或其他 Markdown 链接格式标注引用\n"
+            "- 绝对不要在回答中包含任何 URL\n"
+            "- 示例：根据报道，DeepSeek-R1 在推理任务上表现优异 [1]\n"
+            "- 每个关键事实必须标注至少一个来源编号\n"
+        )
+    return base
 
 
 def _normalize_reasoning_level(
@@ -203,3 +224,24 @@ async def create_chat_completion(
 
     message = getattr(choices[0], "message", None)
     return getattr(message, "content", None) or ""
+
+
+from typing import Any  # noqa: E402
+
+WEB_SEARCH_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "搜索互联网获取最新信息、新闻、实时数据。当用户的问题涉及最新事件、实时数据或你可能不确定的信息时使用此工具。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词",
+                }
+            },
+            "required": ["query"],
+        },
+    }
+}

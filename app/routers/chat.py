@@ -29,6 +29,27 @@ from ..services import (
 from ..services.attachment_service import save_attachments
 from ..services.auth_service import get_current_user
 from ..services.project_service import get_user_project
+from ..services.search_service import SearchResult, format_search_results, search_web
+
+
+def _inject_citation_links(text: str, results: list[SearchResult]) -> str:
+    """Replace [N] citation markers with Markdown links for saved messages."""
+    import re
+
+    if not results:
+        return text
+
+    citation_map = {i + 1: r for i, r in enumerate(results)}
+
+    def replacer(match: re.Match) -> str:
+        idx = int(match.group(1))
+        result = citation_map.get(idx)
+        if not result:
+            return match.group(0)
+        return f'[◆]({result.url} "{result.title}")'
+
+    return re.sub(r"\[(\d+)\]", replacer, text)
+
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -426,18 +447,113 @@ async def chat(
     async def event_stream():
         full_response: list[str] = []
         stream_cancelled = False
+        search_results: list[SearchResult] = []
 
         yield f"data: {json.dumps({'conversation_id': conv_id})}\n\n"
 
         try:
-            async for chunk in llm_service.stream_chat_completion(
-                context,
-                model=chosen_model,
-                reasoning_level=req.reasoning_level,
-                legacy_mode=req.mode,
-            ):
-                full_response.append(chunk)
-                yield f"data: {json.dumps({'content': chunk})}\n\n"
+            should_use_search = (
+                settings.WEB_SEARCH_ENABLED
+                and settings.TAVILY_API_KEY
+            )
+
+            if should_use_search:
+                normalized_reasoning = llm_service._normalize_reasoning_level(
+                    chosen_model, req.reasoning_level, req.mode,
+                )
+                extra_body, max_tokens = llm_service._build_model_controls(
+                    chosen_model, normalized_reasoning,
+                )
+
+                tool_messages: list[dict[str, object]] = [
+                    {"role": "system", "content": llm_service._build_system_prompt(chosen_model)},
+                    *context,
+                ]
+
+                check_resp = await llm_service._client.chat.completions.create(
+                    model=chosen_model,
+                    messages=tool_messages,
+                    tools=[llm_service.WEB_SEARCH_TOOL],
+                    stream=False,
+                    max_tokens=max_tokens,
+                    extra_body=extra_body or None,
+                )
+
+                check_choice = check_resp.choices[0] if check_resp.choices else None
+                search_text = ""
+
+                if (
+                    check_choice
+                    and check_choice.finish_reason == "tool_calls"
+                    and check_choice.message.tool_calls
+                ):
+                    for tc in check_choice.message.tool_calls:
+                        fn_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                        query = fn_args.get("query", "")
+
+                        yield f"data: {json.dumps({'search_status': 'searching', 'query': query})}\n\n"
+
+                        results = await search_web(query)
+                        search_results = results
+                        urls = [r.url for r in results]
+                        yield f"data: {json.dumps({'search_status': 'results', 'urls': urls})}\n\n"
+
+                        search_text = format_search_results(results)
+
+                        tool_messages.append(check_choice.message.model_dump())
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": search_text,
+                        })
+
+                    tool_messages[0] = {
+                        "role": "system",
+                        "content": llm_service._build_system_prompt(chosen_model, search_context=search_text),
+                    }
+
+                    stream = await llm_service._client.chat.completions.create(
+                        model=chosen_model,
+                        messages=tool_messages,
+                        stream=True,
+                        max_tokens=max_tokens,
+                        extra_body=extra_body or None,
+                    )
+                    async for chunk in stream:
+                        choices = getattr(chunk, "choices", None) or []
+                        if not choices:
+                            continue
+                        delta = getattr(choices[0], "delta", None)
+                        content = getattr(delta, "content", None)
+                        if content:
+                            full_response.append(content)
+                            yield f"data: {json.dumps({'content': content})}\n\n"
+                    # Send citation metadata for frontend rendering
+                    if search_results:
+                        citations = [
+                            {"index": i + 1, "title": r.title, "url": r.url}
+                            for i, r in enumerate(search_results)
+                        ]
+                        yield f"data: {json.dumps({'citations': citations})}\n\n"
+                else:
+                    # No tool call — model decided search not needed, stream normally
+                    async for chunk in llm_service.stream_chat_completion(
+                        context,
+                        model=chosen_model,
+                        reasoning_level=req.reasoning_level,
+                        legacy_mode=req.mode,
+                    ):
+                        full_response.append(chunk)
+                        yield f"data: {json.dumps({'content': chunk})}\n\n"
+            else:
+                async for chunk in llm_service.stream_chat_completion(
+                    context,
+                    model=chosen_model,
+                    reasoning_level=req.reasoning_level,
+                    legacy_mode=req.mode,
+                ):
+                    full_response.append(chunk)
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
         except asyncio.CancelledError:
             stream_cancelled = True
             raise
@@ -446,6 +562,8 @@ async def chat(
         finally:
             assistant_content = "".join(full_response)
             if assistant_content:
+                if search_results:
+                    assistant_content = _inject_citation_links(assistant_content, search_results)
                 save_db = SessionLocal()
                 try:
                     memory_service.store_message(

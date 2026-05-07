@@ -131,6 +131,11 @@ class Settings(BaseSettings):
     MEMORY_DOCUMENTS_AI_ENABLED: bool = False
     APP_TIMEZONE: str = "Asia/Shanghai"
 
+    # Web Search (Tavily)
+    TAVILY_API_KEY: str = ""
+    WEB_SEARCH_ENABLED: bool = True
+    WEB_SEARCH_MAX_RESULTS: int = 5
+
     # Embedding (Xinference / OpenAI-compatible)
     EMBEDDING_BASE_URL: str = ""
     EMBEDDING_API_KEY: str = "unused"
